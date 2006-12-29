@@ -12,6 +12,7 @@ requires		'LWP::UserAgent'	=> 0;
 requires		'HTTP::Date'		=> 0;
 requires		'URI'				=> 0;
 requires		'Params::Validate'	=> 0;
+requires		'XML::Simple'		=> 0;
 build_requires  'Test::More'        => 0;
 
 auto_install;

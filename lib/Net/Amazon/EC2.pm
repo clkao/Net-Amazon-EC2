@@ -11,7 +11,7 @@ use MIME::Base64 qw(encode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF);
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 =head1 NAME
 
@@ -20,7 +20,7 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.01 of Net::Amazon::EC2, released
+This document describes version 0.02 of Net::Amazon::EC2, released
 December 28, 2006. This module is coded against the REST version of the '2006-10-01' version of the EC2 API.
 
 =head1 SYNOPSIS

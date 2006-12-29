@@ -17,4 +17,5 @@ requires:
   MIME::Base64: 0
   Params::Validate: 0
   URI: 0
-version: 0.01
+  XML::Simple: 0
+version: 0.02
