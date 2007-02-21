@@ -7,11 +7,11 @@ use XML::Simple;
 use LWP::UserAgent;
 use Digest::HMAC_SHA1;
 use URI;
-use MIME::Base64 qw(encode_base64);
+use MIME::Base64 qw(encode_base64 decode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF);
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 =head1 NAME
 
@@ -20,8 +20,8 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.02 of Net::Amazon::EC2, released
-December 28, 2006. This module is coded against the REST version of the '2006-10-01' version of the EC2 API.
+This document describes version 0.03 of Net::Amazon::EC2, released
+February 21, 2007. This module is coded against the Query version of the '2007-01-03' version of the EC2 API.
 
 =head1 SYNOPSIS
 
@@ -49,7 +49,7 @@ If an error occurs in communicating with EC2, the return value will be undef and
 
 =head1 DESCRIPTION
 
-This module is a Perl interface to Amazon's Elastic Compute Cloud. It uses REST to communicate with Amazon's Web Services framework.
+This module is a Perl interface to Amazon's Elastic Compute Cloud. It uses the Query API to communicate with Amazon's Web Services framework.
 
 =head1 CLASS METHODS
 
@@ -99,7 +99,7 @@ sub _init {
 	my $ts = time2isoz();
 
 	$self->{signature_version} = 1;
-	$self->{version} = '2006-10-01';
+	$self->{version} = '2007-01-03';
 	$self->{base_url} = 'http://ec2.amazonaws.com';
 	$self->{AWSAccessKeyId} = $args{AWSAccessKeyId};
 	$self->{SecretAccessKey} = $args{SecretAccessKey};
@@ -129,7 +129,7 @@ sub _sign {
 		$sign_this .= $key . $sign_hash{$key};
 	}
 
-	$self->_debug("REST QUERY TO SIGN: $sign_this");
+	$self->_debug("QUERY TO SIGN: $sign_this");
 	my $encoded = $self->_hashit($self->{SecretAccessKey}, $sign_this);
 
 	my $uri = URI->new($self->{base_url});
@@ -146,7 +146,7 @@ sub _sign {
 	$uri->query_form(\%params);
 	
 	my $ur = $uri->as_string();
-	$self->_debug("GENERATED REST URL: $ur");
+	$self->_debug("GENERATED QUERY URL: $ur");
 	my $ua = LWP::UserAgent->new();
 	my $res = $ua->get($ur);
 	
@@ -167,13 +167,13 @@ sub _debug {
 	}
 }
 
-# HMAC sign the REST query with the aws secret access key and base64 encodes the result.
+# HMAC sign the query with the aws secret access key and base64 encodes the result.
 sub _hashit {
 	my $self = shift;
-	my ($secret_access_key, $rest_query_string) = @_;
+	my ($secret_access_key, $query_string) = @_;
 	
 	my $hashed = Digest::HMAC_SHA1->new($secret_access_key);
-	$hashed->add($rest_query_string);
+	$hashed->add($query_string);
 	
 	my $encoded = encode_base64($hashed->digest, '');
 
@@ -1136,6 +1136,87 @@ sub revoke_security_group_ingress {
 	}
 }
 
+=head2 get_console_output(%params)
+
+This method gets the output from the virtual console for an instance.  It takes the following parameters:
+
+=over
+
+=item InstanceId (required)
+
+A scalar containing a instance id.
+
+=back
+
+Returns the output from the console for the instance.
+
+=cut
+
+sub get_console_output {
+	my $self = shift;
+	my %args = validate( @_, {
+								InstanceId					=> { type => SCALAR },
+	});
+	
+	
+	my $xml = $self->_sign(Action  => 'GetConsoleOutput', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
+		$self->{error} = $xml->{Errors}{Error}{Message};
+
+		return undef;
+	}
+	else {
+		return decode_base64($xml->{output});
+	}
+}
+
+=head2 reboot_instances(%params)
+
+This method reboots an instance.  It takes the following parameters:
+
+=over
+
+=item InstanceId (required)
+
+Instance Id of the instance you wish to reboot. Can be either a scalar or array ref of instances to reboot.
+
+=back
+
+Returns 1 if the reboot succeeded.
+
+=cut
+
+sub reboot_instances {
+	my $self = shift;
+	my %args = validate( @_, {
+								InstanceId					=> { type => SCALAR },
+	});
+	
+	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	if (ref ($args{InstanceId}) eq 'ARRAY') {
+		my $instance_ids = delete $args{InstanceId};
+		my $count = 1;
+		foreach my $instance_id (@{$instance_ids}) {
+			$args{"InstanceId." . $count} = $instance_id;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'RebootInstances', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
+		$self->{error} = $xml->{Errors}{Error}{Message};
+
+		return undef;
+	}
+	else {
+		return $xml;
+	}
+}
+
 1;
 
 __END__
@@ -1160,10 +1241,10 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006 Jeff Kim.  All rights reserved.  This
+Copyright (c) 2006-2007 Jeff Kim.  All rights reserved.  This
 program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Amazon EC2 API: L<http://docs.amazonwebservices.com/AmazonEC2/dg/2006-10-01/>
+Amazon EC2 API: L<http://docs.amazonwebservices.com/AmazonEC2/dg/2007-01-03/>
