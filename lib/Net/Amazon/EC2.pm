@@ -11,7 +11,7 @@ use MIME::Base64 qw(encode_base64 decode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF);
 
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 =head1 NAME
 
@@ -20,8 +20,8 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.03 of Net::Amazon::EC2, released
-February 21, 2007. This module is coded against the Query version of the '2007-01-03' version of the EC2 API.
+This document describes version 0.04 of Net::Amazon::EC2, released
+April 1, 2007. This module is coded against the Query version of the '2007-01-19' version of the EC2 API.
 
 =head1 SYNOPSIS
 
@@ -99,7 +99,7 @@ sub _init {
 	my $ts = time2isoz();
 
 	$self->{signature_version} = 1;
-	$self->{version} = '2007-01-03';
+	$self->{version} = '2007-01-19';
 	$self->{base_url} = 'http://ec2.amazonaws.com';
 	$self->{AWSAccessKeyId} = $args{AWSAccessKeyId};
 	$self->{SecretAccessKey} = $args{SecretAccessKey};
@@ -369,6 +369,10 @@ An scalar or array ref. Will associate this instance with the group names passed
 
 Optional data to pass into the instance being started.  Needs to be base64 encoded.
 
+=item AddressingType (options)
+
+Optional addressing scheme to launch the instance.  If passed in it should have a value of either "direct" or "public".
+
 =back
 
 Returns a data structure which looks like this:
@@ -386,7 +390,8 @@ Returns a data structure which looks like this:
 								   },
 				  'instanceId' => '',
 				  'reason' => {},
-				  'dnsName' => {},
+				  'dnsName' => '',
+				  'privateDnsName' => '',
 				  'amiLaunchIndex' => '',
 				  'keyName' => '',
 				  'imageId' => ''
@@ -406,6 +411,7 @@ sub run_instances {
 								KeyName			=> { type => SCALAR, optional => 1 },
 								SecurityGroup	=> { type => SCALAR | ARRAYREF, optional => 1 },
 								UserData		=> { type => SCALAR, optional => 1 },
+								AddressingType	=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -443,7 +449,7 @@ sub run_instances {
 
 =head2 describe_instances(%params)
 
-This method pulls a list of the AMIs which can be run.  The list can be modified by passing in some of the following parameters:
+This method pulls a list of the instances which are running or were just running.  The list can be modified by passing in some of the following parameters:
 
 =over
 
@@ -464,6 +470,7 @@ Returns the following data structure, or undef if a failure has occured:
                                              },
                             'instanceId' => '',
                             'reason' => {},
+                            'privateDnsName' => '',
                             'dnsName' => '',
                             'keyName' => '',
                             'imageId' => ''
@@ -1217,6 +1224,58 @@ sub reboot_instances {
 	}
 }
 
+=head2 describe_image_attributes(%params)
+
+This method pulls a list of attributes for the image id specified
+
+=over
+
+=item ImageId (required)
+
+A scalar containing the image you want to get the list of attributes for.
+
+=item Attribute (required)
+
+A scalar containing the attribute to describe.  Currently the only possible value for this is 'launchPermission'.
+
+=back
+
+Returns the following data structure, or undef if a failure has occured:
+
+ {
+	'ImageId' => '',
+	'launchPermission' => {
+					item => [
+						'group' => '',
+						'user_id' => ''
+					]
+	}
+ };
+
+=cut
+
+sub describe_image_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+								ImageId => { type => SCALAR },
+								Attribute => { type => SCALAR }
+	});
+		
+	my $xml = $self->_sign(Action  => 'DescribeImageAttribute', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
+		$self->{error} = $xml->{Errors}{Error}{Message};
+
+		return undef;
+	}
+	else {
+		# Lets create our custom data struct here
+		my $struct = { ImageId => $xml->{ImageId}, launchPermission => $xml->{launchPermission} };
+		return $struct;
+	}
+}
+
 1;
 
 __END__
@@ -1247,4 +1306,4 @@ under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Amazon EC2 API: L<http://docs.amazonwebservices.com/AmazonEC2/dg/2007-01-03/>
+Amazon EC2 API: L<http://docs.amazonwebservices.com/AmazonEC2/dg/2007-01-19/>
