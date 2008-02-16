@@ -35,7 +35,7 @@ use Net::Amazon::EC2::Errors;
 use Net::Amazon::EC2::Error;
 use Net::Amazon::EC2::ConfirmProductInstanceResponse;
 
-$VERSION = '0.05';
+$VERSION = '0.06';
 
 =head1 NAME
 
@@ -44,8 +44,8 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.05 of Net::Amazon::EC2, released
-January 6, 2008. This module is coded against the Query version of the '2007-08-29' version of the EC2 API.
+This document describes version 0.06 of Net::Amazon::EC2, released
+February 15, 2008. This module is coded against the Query version of the '2007-08-29' version of the EC2 API.
 
 =head1 SYNOPSIS
 
@@ -61,13 +61,19 @@ January 6, 2008. This module is coded against the Query version of the '2007-08-
 
  my $running_instances = $ec2->describe_instances;
 
- foreach my $inst (@{$running_instances}) {
- 	print $inst->instance_id . "\n";
+ foreach my $reservation (@$running_instances) {
+    foreach my $instance ($reservation->instances_set) {
+        print $instance->instance_id . "\n";
+    }
  }
+
+ my $instance_id = $instance->instances_set->[0]->instance_id;
+
+ print "$instance_id\n";
 
  # Terminate instance
 
- my $result = $ec2->terminate_instances(InstanceId => $instance->instance_id);
+ my $result = $ec2->terminate_instances(InstanceId => $instance_id);
 
 If an error occurs while communicating with EC2, the return value of these methods will be a Net::Amazon::EC2::Errors object.
 
@@ -796,22 +802,23 @@ sub describe_images {
 			
 			foreach my $item (@{$xml->{imagesSet}{item}}) {
 				my $product_codes;
-				
-				if (grep { defined && length } $item->{productCodes} ) {
-					foreach my $pc (@{$item->{productCodes}{item}}) {
-						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
-						push @$product_codes, $product_code;
-					}
-				}
-				
 				my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
 					image_id		=> $item->{imageId},
 					image_owner_id	=> $item->{imageOwnerId},
 					image_state		=> $item->{imageState},
 					is_public		=> $item->{isPublic},
 					image_location	=> $item->{imageLocation},
-					product_codes	=> $product_codes,
 				);
+				
+				if (grep { defined && length } $item->{productCodes} ) {
+					foreach my $pc (@{$item->{productCodes}{item}}) {
+						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+						push @$product_codes, $product_code;
+					}
+					
+					$image->product_codes($product_codes);
+				}
+				
 				push @$images, $image;
 			}
 					
@@ -853,6 +860,7 @@ sub describe_instances {
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeInstances', %args);
+
 	my $reservations;
 	
 	if ($self->use_old_api) {
@@ -915,15 +923,14 @@ sub describe_instances {
 					unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
 						$instance_elem->{reason} = undef;
 					}
-		
-					unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH') {
+							
+					unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH' ) {
 						$instance_elem->{privateDnsName} = undef;
 					}
-		
-					unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH') {
+										
+					unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH' ) {
 						$instance_elem->{dnsName} = undef;
 					}
-				
 					
 					my $running_instance = Net::Amazon::EC2::RunningInstances->new(
 						instance_id			=> $instance_elem->{instanceId},
@@ -1813,11 +1820,11 @@ __END__
 
 =head1 UPCOMING BACKWARDS INCOMPATIBILITY NOTICE
 
-I've implemented the returned data structures as objects as opposed to data structures.  In this release I am supporting both the deprecated and the new object-based returned data.  In the next release (0.06) the data structures _WILL NO LONGER BE SUPPORTED_
+I've implemented the returned data structures as objects as opposed to data structures.  In this release I am supporting both the deprecated and the new object-based returned data.  In the next release (0.07) the data structures _WILL NO LONGER BE SUPPORTED_
 
 =head1 TESTING
 
-Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of Jan 6th, 2008 costs a total of $0.20 USD
+Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of Feb 15th, 2008 costs a total of $0.20 USD
 
 =head1 AUTHOR
 
