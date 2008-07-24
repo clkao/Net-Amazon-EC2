@@ -7,7 +7,7 @@ BEGIN {
         plan skip_all => "Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run these _LIVE_ tests (NOTE: they will incur one instance hour of costs from EC2)";
     }
     else {
-        plan tests => 16;
+        plan tests => 18;
         use_ok( 'Net::Amazon::EC2' );
     }
 };
@@ -15,7 +15,6 @@ BEGIN {
 my $ec2 = Net::Amazon::EC2->new(
 	AWSAccessKeyId  => $ENV{AWS_ACCESS_KEY_ID}, 
 	SecretAccessKey => $ENV{SECRET_ACCESS_KEY},
-	use_old_api     => 0,
 	debug           => 0,
 );
 
@@ -49,6 +48,10 @@ ok($create_result == 1, "Checking for created security group");
 # authorize_security_group_ingress
 my $authorize_result = $ec2->authorize_security_group_ingress(GroupName => "test_group", IpProtocol => 'tcp', FromPort => '7003', ToPort => '7003', CidrIp => '10.253.253.253/32');
 ok($authorize_result == 1, "Checking for authorization of rule for security group");
+
+# Add this for RT Bug: #33883
+my $authorize_result_bad = $ec2->authorize_security_group_ingress(GroupName => "test_group_non_existant", IpProtocol => 'tcp', FromPort => '7003', ToPort => '7003', CidrIp => '10.253.253.253/32');
+isa_ok($authorize_result_bad, 'Net::Amazon::EC2::Errors');
 
 # describe_security_groups
 my $security_groups = $ec2->describe_security_groups();
@@ -105,4 +108,13 @@ ok($delete_key_result == 1, "Deleting key pair");
 $delete_group_result = $ec2->delete_security_group(GroupName => "test_group");
 ok($delete_group_result == 1, "Deleting security group");
 
-# THE REST OF THE METHODS ARE SKIPPED FOR NOW SINCE IT WOULD REQUIRE A DECENT AMOUNT OF TIME AFTER AN IMAGE HAS BEEN INSTANTIATED TO TEST
+my $availability_zones = $ec2->describe_availability_zones();
+my $seen_availability_zone = 0;
+foreach my $availability_zone (@{$availability_zones}) {
+	if ($availability_zone->zone_name eq 'us-east-1a') {
+		$seen_availability_zone = 1;
+	}
+}
+ok($seen_availability_zone == 1, "Describing availability zones");
+
+# THE REST OF THE METHODS ARE SKIPPED FOR NOW SINCE IT WOULD REQUIRE A DECENT AMOUNT OF TIME IN BETWEEN OPERATIONS TO COMPLETE

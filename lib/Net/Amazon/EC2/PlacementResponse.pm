@@ -1,26 +1,28 @@
-package Net::Amazon::EC2::UserData;
+package Net::Amazon::EC2::PlacementResponse;
 use strict;
 use Moose;
 
 =head1 NAME
 
-Net::Amazon::EC2::UserData
+Net::Amazon::EC2::PlacementResponse
 
 =head1 DESCRIPTION
 
-A class representing EC2 User Data attached to an instance.
+A class containing information about the placement of an instance in an availability zone.
 
 =head1 ATTRIBUTES
 
 =over
 
-=item data (required)
+=item availability_zone (required)
 
-User data itself which is passed to the instance.
+The availability zone for the instance.
+
+=back
 
 =cut
 
-has 'data'	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'availability_zone'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
 
 __PACKAGE__->meta->make_immutable();
 

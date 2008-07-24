@@ -21,7 +21,6 @@ use Net::Amazon::EC2::LaunchPermissionOperation;
 use Net::Amazon::EC2::ProductCode;
 use Net::Amazon::EC2::ProductInstanceResponse;
 use Net::Amazon::EC2::ReservationInfo;
-use Net::Amazon::EC2::RunInstance;
 use Net::Amazon::EC2::RunningInstances;
 use Net::Amazon::EC2::SecurityGroup;
 use Net::Amazon::EC2::TerminateInstancesResponse;
@@ -34,8 +33,12 @@ use Net::Amazon::EC2::ConsoleOutput;
 use Net::Amazon::EC2::Errors;
 use Net::Amazon::EC2::Error;
 use Net::Amazon::EC2::ConfirmProductInstanceResponse;
+use Net::Amazon::EC2::DescribeAddress;
+use Net::Amazon::EC2::AvailabilityZone;
+use Net::Amazon::EC2::BlockDeviceMapping;
+use Net::Amazon::EC2::PlacementResponse;
 
-$VERSION = '0.06';
+$VERSION = '0.07';
 
 =head1 NAME
 
@@ -44,8 +47,9 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.06 of Net::Amazon::EC2, released
-February 15, 2008. This module is coded against the Query version of the '2007-08-29' version of the EC2 API.
+This document describes version 0.07 of Net::Amazon::EC2, released
+July 23, 2008. This module is coded against the Query version of the '2008-02-01' version of the EC2 API which was last
+update May 29th 2008.
 
 =head1 SYNOPSIS
 
@@ -101,13 +105,6 @@ Your secret key, WARNING! don't give this out or someone will be able to use you
 
 A flag to turn on debugging. It is turned off by default
 
-=item use_old_api (optional)
-
-Setting this to 1 will cause the data coming back from the method calls to be returned as data structures instead of objects (set this to enable backwards compatibility
-with code written against 0.01-0.04 of this module)
-
-NOTE: THIS BACKWARDS COMPATIBILITY WILL END AFTER THIS VERSION
-
 =back
 
 =cut
@@ -115,9 +112,8 @@ NOTE: THIS BACKWARDS COMPATIBILITY WILL END AFTER THIS VERSION
 has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
-has 'use_old_api'		=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2007-08-29' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2008-02-01' );
 has 'base_url'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'http://ec2.amazonaws.com' );
 has 'timestamp'			=> ( is => 'ro', isa => 'Str', required => 1, default => sub { my $ts = time2isoz(); chop($ts); $ts .= '.000Z'; $ts =~ s/\s+/T/g; return $ts; } );
 
@@ -172,6 +168,7 @@ sub _parse_errors {
 	
 	my $es;
 	my $request_id = $errors_xml->{RequestID};
+
 	foreach my $e (@{$errors_xml->{Errors}}) {
 		my $error = Net::Amazon::EC2::Error->new(
 			code	=> $e->{Error}{Code},
@@ -186,7 +183,7 @@ sub _parse_errors {
 		errors		=> $es,
 	);
 
-	foreach my $error ($errors->errors) {
+	foreach my $error (@{$errors->errors}) {
 		$self->_debug("ERROR CODE: " . $error->code . " MESSAGE: " . $error->message . " FOR REQUEST: " . $errors->request_id);
 	}
 	
@@ -281,36 +278,15 @@ sub authorize_security_group_ingress {
 	
 	my $xml = $self->_sign(Action  => 'AuthorizeSecurityGroupIngress', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -381,31 +357,18 @@ sub create_key_pair {
 		
 	my $xml = $self->_sign(Action  => 'CreateKeyPair', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-			
-			return undef;
-		}
-		else {
-			return $xml;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			my $key_pair = Net::Amazon::EC2::KeyPair->new(
-				key_name		=> $xml->{keyName},
-				key_fingerprint	=> $xml->{keyFingerprint},
-				key_material	=> $xml->{keyMaterial},
-			);
-			
-			return $key_pair;
-		}
-	}	
+		my $key_pair = Net::Amazon::EC2::KeyPair->new(
+			key_name		=> $xml->{keyName},
+			key_fingerprint	=> $xml->{keyFingerprint},
+			key_material	=> $xml->{keyMaterial},
+		);
+		
+		return $key_pair;
+	}
 }
 
 =head2 create_security_group(%params)
@@ -438,35 +401,17 @@ sub create_security_group {
 	
 	my $xml = $self->_sign(Action  => 'CreateSecurityGroup', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}	
-	}
+			return undef;
+		}
+	}	
 }
 
 =head2 delete_key_pair(%params)
@@ -493,35 +438,17 @@ sub delete_key_pair {
 		
 	my $xml = $self->_sign(Action  => 'DeleteKeyPair', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}	
-	}
+			return undef;
+		}
+	}	
 }
 
 =head2 delete_security_group(%params)
@@ -549,33 +476,15 @@ sub delete_security_group {
 	
 	my $xml = $self->_sign(Action  => 'DeleteSecurityGroup', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -605,33 +514,15 @@ sub deregister_image {
 
 	my $xml = $self->_sign(Action  => 'DeregisterImage', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -648,7 +539,25 @@ A scalar containing the image you want to get the list of attributes for.
 
 =item Attribute (required)
 
-A scalar containing the attribute to describe.  Currently the only possible value for this is 'launchPermission'.
+A scalar containing the attribute to describe.
+
+Valid attributes are:
+
+=over
+
+=item launchPermission - The AMIs launch permissions.
+
+=item ImageId - ID of the AMI for which an attribute will be described.
+
+=item productCodes - The product code attached to the AMI.
+
+=item kernel - Describes the ID of the kernel associated with the AMI.
+
+=item ramdisk - Describes the ID of RAM disk associated with the AMI.
+
+=item blockDeviceMapping - Defines native device names to use when exposing virtual devices.
+
+=back
 
 =back
 
@@ -665,56 +574,56 @@ sub describe_image_attribute {
 		
 	my $xml = $self->_sign(Action  => 'DescribeImageAttribute', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			# Lets create our custom data struct here
-			my $struct = { ImageId => $xml->{ImageId}, launchPermission => $xml->{launchPermission} };
-			return $struct;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			my $launch_permissions;
-			my $product_codes;
-			
-			if ( grep { defined && length } $xml->{launchPermission}{item} ) {
-				foreach my $lp (@{$xml->{launchPermission}{item}}) {
-					my $launch_permission = Net::Amazon::EC2::LaunchPermission->new(
-						group	=> $lp->{group},
-						user_id	=> $lp->{userId},
-					);
-					
-					push @$launch_permissions, $launch_permission;
-				}
+		my $launch_permissions;
+		my $product_codes;
+		my $block_device_mappings;
+		
+		if ( grep { defined && length } $xml->{launchPermission}{item} ) {
+			foreach my $lp (@{$xml->{launchPermission}{item}}) {
+				my $launch_permission = Net::Amazon::EC2::LaunchPermission->new(
+					group	=> $lp->{group},
+					user_id	=> $lp->{userId},
+				);
+				
+				push @$launch_permissions, $launch_permission;
 			}
-	
-			if ( grep { defined && length } $xml->{productCodes}{item} ) {
-				foreach my $pc (@{$xml->{productCodes}{item}}) {
-					my $product_code = Net::Amazon::EC2::ProductCode->new(
-						product_code	=> $pc->{productCode},
-					);
-					
-					push @$product_codes, $product_code;
-				}
-			}
-			
-			my $describe_image_attribute = Net::Amazon::EC2::DescribeImageAttribute->new(
-				image_id			=> $xml->{imageId},
-				launch_permissions	=> $launch_permissions,
-				product_codes		=> $product_codes,
-			);
-	
-			return $describe_image_attribute;
 		}
+
+		if ( grep { defined && length } $xml->{productCodes}{item} ) {
+			foreach my $pc (@{$xml->{productCodes}{item}}) {
+				my $product_code = Net::Amazon::EC2::ProductCode->new(
+					product_code	=> $pc->{productCode},
+				);
+				
+				push @$product_codes, $product_code;
+			}
+		}
+		
+		if ( grep { defined && length } $xml->{blockDeviceMapping}{item} ) {
+			foreach my $bd (@{$xml->{blockDeviceMapping}{item}}) {
+				my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+					virtual_name	=> $bd->{virtualName},
+					device_name		=> $bd->{deviceName},
+				);
+				
+				push @$block_device_mappings, $block_device_mapping;
+			}
+		}
+		
+		my $describe_image_attribute = Net::Amazon::EC2::DescribeImageAttribute->new(
+			image_id			=> $xml->{imageId},
+			launch_permissions	=> $launch_permissions,
+			product_codes		=> $product_codes,
+			kernel				=> $xml->{kernel},
+			ramdisk				=> $xml->{ramdisk},
+			blockDeviceMapping	=> $block_device_mappings,
+		);
+
+		return $describe_image_attribute;
 	}
 }
 
@@ -782,48 +691,39 @@ sub describe_images {
 
 	my $xml = $self->_sign(Action  => 'DescribeImages', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-			
-			return undef;
-		}
-		else {
-			return $xml->{imagesSet}{item};
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			my $images;
+		my $images;
+		
+		foreach my $item (@{$xml->{imagesSet}{item}}) {
+			my $product_codes;
+			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
+				image_id		=> $item->{imageId},
+				image_owner_id	=> $item->{imageOwnerId},
+				image_state		=> $item->{imageState},
+				is_public		=> $item->{isPublic},
+				image_location	=> $item->{imageLocation},
+				architecture	=> $item->{architecture},
+				image_type		=> $item->{imageType},
+				kernel_id		=> $item->{kernelId},
+				ramdisk_id		=> $item->{ramdiskId},
+			);
 			
-			foreach my $item (@{$xml->{imagesSet}{item}}) {
-				my $product_codes;
-				my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
-					image_id		=> $item->{imageId},
-					image_owner_id	=> $item->{imageOwnerId},
-					image_state		=> $item->{imageState},
-					is_public		=> $item->{isPublic},
-					image_location	=> $item->{imageLocation},
-				);
-				
-				if (grep { defined && length } $item->{productCodes} ) {
-					foreach my $pc (@{$item->{productCodes}{item}}) {
-						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
-						push @$product_codes, $product_code;
-					}
-					
-					$image->product_codes($product_codes);
+			if (grep { defined && length } $item->{productCodes} ) {
+				foreach my $pc (@{$item->{productCodes}{item}}) {
+					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+					push @$product_codes, $product_code;
 				}
 				
-				push @$images, $image;
+				$image->product_codes($product_codes);
 			}
-					
-			return $images;
+			
+			push @$images, $image;
 		}
+				
+		return $images;
 	}
 }
 
@@ -863,106 +763,84 @@ sub describe_instances {
 
 	my $reservations;
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			# Lets create our custom data struct here
-			my $structs;
-			
-			foreach my $instance (@{$xml->{reservationSet}{item}}) {
-				my $struct;
-				$struct->{reservationId} = $instance->{reservationId};
-				$struct->{ownerId} = $instance->{ownerId};
-				$struct->{instance} = $instance->{instancesSet}{item};
-				
-				foreach my $group_arr (@{$instance->{groupSet}{item}}) {
-						push @{$struct->{groups}}, $group_arr->{groupId};
-				}
-	
-				push @{$structs}, $struct;
-			}
-			
-			return $structs;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			foreach my $reservation_set (@{$xml->{reservationSet}{item}}) {
-				my $group_sets;
-				foreach my $group_arr (@{$reservation_set->{groupSet}{item}}) {
-					my $group = Net::Amazon::EC2::GroupSet->new(
-						group_id => $group_arr->{groupId},
-					);
-					push @$group_sets, $group;
-				}
-		
-				my $running_instances;
-				foreach my $instance_elem (@{$reservation_set->{instancesSet}{item}}) {
-					my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
-						code	=> $instance_elem->{instanceState}{code},
-						name	=> $instance_elem->{instanceState}{name},
-					);
-					
-					my $product_codes;
-					
-					if (grep { defined && length } $instance_elem->{productCodes} ) {
-						foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
-							my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
-							push @$product_codes, $product_code;
-						}
-					}
-		
-					unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
-						$instance_elem->{reason} = undef;
-					}
-							
-					unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH' ) {
-						$instance_elem->{privateDnsName} = undef;
-					}
-										
-					unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH' ) {
-						$instance_elem->{dnsName} = undef;
-					}
-					
-					my $running_instance = Net::Amazon::EC2::RunningInstances->new(
-						instance_id			=> $instance_elem->{instanceId},
-						image_id			=> $instance_elem->{imageId},
-						instance_state		=> $instance_state_type,
-						private_dns_name	=> $instance_elem->{privateDnsName},
-						dns_name			=> $instance_elem->{dnsName},
-						reason				=> $instance_elem->{reason},
-						key_name			=> $instance_elem->{keyName},
-						ami_launch_index	=> $instance_elem->{amiLaunchIndex},
-						instance_type		=> $instance_elem->{instanceType},
-						launch_time			=> $instance_elem->{launchTime},
-					);
+		foreach my $reservation_set (@{$xml->{reservationSet}{item}}) {
+			my $group_sets;
+			foreach my $group_arr (@{$reservation_set->{groupSet}{item}}) {
+				my $group = Net::Amazon::EC2::GroupSet->new(
+					group_id => $group_arr->{groupId},
+				);
+				push @$group_sets, $group;
+			}
 	
-					if ($product_codes) {
-						$running_instance->product_codes($product_codes);
-					}
-					
-					push @$running_instances, $running_instance;
-				}
-							
-				my $reservation = Net::Amazon::EC2::ReservationInfo->new(
-					reservation_id	=> $reservation_set->{reservationId},
-					owner_id		=> $reservation_set->{ownerId},
-					group_set		=> $group_sets,
-					instances_set	=> $running_instances,
+			my $running_instances;
+			foreach my $instance_elem (@{$reservation_set->{instancesSet}{item}}) {
+				my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
+					code	=> $instance_elem->{instanceState}{code},
+					name	=> $instance_elem->{instanceState}{name},
 				);
 				
-				push @$reservations, $reservation;
-			}
+				my $product_codes;
 				
+				if (grep { defined && length } $instance_elem->{productCodes} ) {
+					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
+						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+						push @$product_codes, $product_code;
+					}
+				}
+	
+				unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
+					$instance_elem->{reason} = undef;
+				}
+						
+				unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH' ) {
+					$instance_elem->{privateDnsName} = undef;
+				}
+									
+				unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH' ) {
+					$instance_elem->{dnsName} = undef;
+				}
+
+				unless ( grep { defined && length } $instance_elem->{placement}{availabilityZone} and ref $instance_elem->{placement}{availabilityZone} ne 'HASH' ) {
+					$instance_elem->{placement}{availabilityZone} = undef;
+				}
+				
+				my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
+				
+				my $running_instance = Net::Amazon::EC2::RunningInstances->new(
+					ami_launch_index	=> $instance_elem->{amiLaunchIndex},
+					dns_name			=> $instance_elem->{dnsName},
+					image_id			=> $instance_elem->{imageId},
+					instance_id			=> $instance_elem->{instanceId},
+					instance_state		=> $instance_state_type,
+					instance_type		=> $instance_elem->{instanceType},
+					key_name			=> $instance_elem->{keyName},
+					launch_time			=> $instance_elem->{launchTime},
+					placement			=> $placement_response,
+					private_dns_name	=> $instance_elem->{privateDnsName},
+					reason				=> $instance_elem->{reason},
+				);
+
+				if ($product_codes) {
+					$running_instance->product_codes($product_codes);
+				}
+				
+				push @$running_instances, $running_instance;
+			}
+						
+			my $reservation = Net::Amazon::EC2::ReservationInfo->new(
+				reservation_id	=> $reservation_set->{reservationId},
+				owner_id		=> $reservation_set->{ownerId},
+				group_set		=> $group_sets,
+				instances_set	=> $running_instances,
+			);
+			
+			push @$reservations, $reservation;
 		}
+			
 	}
 	
 	return $reservations;
@@ -1002,39 +880,22 @@ sub describe_key_pairs {
 	
 	my $xml = $self->_sign(Action  => 'DescribeKeyPairs', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {	
-			my $structs;
-			
-			$structs = $xml->{keySet}{item};
-	
-			return $structs;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
-	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+	else {	
+		my $key_pairs;
+
+		foreach my $pair (@{$xml->{keySet}{item}}) {
+			my $key_pair = Net::Amazon::EC2::DescribeKeyPairsResponse->new(
+				key_name		=> $pair->{keyName},
+				key_fingerprint	=> $pair->{keyFingerprint},
+			);
+			
+			push @$key_pairs, $key_pair;
 		}
-		else {	
-			my $key_pairs;
-	
-			foreach my $pair (@{$xml->{keySet}{item}}) {
-				my $key_pair = Net::Amazon::EC2::DescribeKeyPairsResponse->new(
-					key_name		=> $pair->{keyName},
-					key_fingerprint	=> $pair->{keyFingerprint},
-				);
-				
-				push @$key_pairs, $key_pair;
-			}
-	
-			return $key_pairs;
-		}
+
+		return $key_pairs;
 	}
 }
 
@@ -1059,7 +920,7 @@ sub describe_security_groups {
 	my %args = validate( @_, {
 		GroupName => { type => SCALAR | ARRAYREF, optional => 1 },
 	});
-	
+
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
 	if (ref ($args{GroupName}) eq 'ARRAY') {
 		my $groups = delete $args{GroupName};
@@ -1072,87 +933,76 @@ sub describe_security_groups {
 	
 	my $xml = $self->_sign(Action  => 'DescribeSecurityGroups', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			return $xml->{securityGroupInfo}{item};
-		}	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			my $security_groups;
-			foreach my $sec_grp (@{$xml->{securityGroupInfo}{item}}) {
-				my $owner_id = $sec_grp->{ownerId};
-				my $group_name = $sec_grp->{groupName};
-				my $group_description = $sec_grp->{groupDescription};
-				my $ip_permissions;
-				foreach my $ip_perm (@{$sec_grp->{ipPermissions}{item}}) {
-					my $ip_protocol = $ip_perm->{ipProtocol};
-					my $from_port	= $ip_perm->{fromPort};
-					my $to_port		= $ip_perm->{toPort};
-					my $groups;
-					my $ip_ranges;
-					
-					if (grep { defined && length } $ip_perm->{groups}{item}) {
-						foreach my $grp (@{$ip_perm->{groups}{item}}) {
-							my $group = Net::Amazon::EC2::UserIdGroupPair->new(
-								user_id		=> $grp->{userId},
-								group_name	=> $grp->{groupName},
-							);
-							
-							push @$groups, $group;
-						}
+		my $security_groups;
+		foreach my $sec_grp (@{$xml->{securityGroupInfo}{item}}) {
+			my $owner_id = $sec_grp->{ownerId};
+			my $group_name = $sec_grp->{groupName};
+			my $group_description = $sec_grp->{groupDescription};
+			my $ip_permissions;
+
+			foreach my $ip_perm (@{$sec_grp->{ipPermissions}{item}}) {
+				my $ip_protocol = $ip_perm->{ipProtocol};
+				my $from_port	= $ip_perm->{fromPort};
+				my $to_port		= $ip_perm->{toPort};
+				my $groups;
+				my $ip_ranges;
+				
+				if (grep { defined && length } $ip_perm->{groups}{item}) {
+					foreach my $grp (@{$ip_perm->{groups}{item}}) {
+						my $group = Net::Amazon::EC2::UserIdGroupPair->new(
+							user_id		=> $grp->{userId},
+							group_name	=> $grp->{groupName},
+						);
+						
+						push @$groups, $group;
 					}
-					
-					if (grep { defined && length } $ip_perm->{ipRanges}{item}) {
-						foreach my $rng (@{$ip_perm->{ipRanges}{item}}) {
-							my $ip_range = Net::Amazon::EC2::IpRange->new(
-								cidr_ip => $rng->{cidrIp},
-							);
-							
-							push @$ip_ranges, $ip_range;
-						}
-					}
-									
-					my $ip_permission = Net::Amazon::EC2::IpPermission->new(
-						ip_protocol			=> $ip_protocol,
-						group_name			=> $group_name,
-						group_description	=> $group_description,
-						from_port			=> $from_port,
-						to_port				=> $to_port,
-					);
-					
-					if ($ip_ranges) {
-						$ip_permission->ip_ranges($ip_ranges);
-					}
-	
-					if ($groups) {
-						$ip_permission->groups($groups);
-					}
-					
-					push @$ip_permissions, $ip_permission;
 				}
 				
-				my $security_group = Net::Amazon::EC2::SecurityGroup->new(
-					owner_id			=> $owner_id,
+				if (grep { defined && length } $ip_perm->{ipRanges}{item}) {
+					foreach my $rng (@{$ip_perm->{ipRanges}{item}}) {
+						my $ip_range = Net::Amazon::EC2::IpRange->new(
+							cidr_ip => $rng->{cidrIp},
+						);
+						
+						push @$ip_ranges, $ip_range;
+					}
+				}
+
+								
+				my $ip_permission = Net::Amazon::EC2::IpPermission->new(
+					ip_protocol			=> $ip_protocol,
 					group_name			=> $group_name,
 					group_description	=> $group_description,
-					ip_permissions		=> $ip_permissions,
+					from_port			=> $from_port,
+					to_port				=> $to_port,
 				);
 				
-				push @$security_groups, $security_group;
+				if ($ip_ranges) {
+					$ip_permission->ip_ranges($ip_ranges);
+				}
+
+				if ($groups) {
+					$ip_permission->groups($groups);
+				}
+				
+				push @$ip_permissions, $ip_permission;
 			}
 			
-			return $security_groups;	
+			my $security_group = Net::Amazon::EC2::SecurityGroup->new(
+				owner_id			=> $owner_id,
+				group_name			=> $group_name,
+				group_description	=> $group_description,
+				ip_permissions		=> $ip_permissions,
+			);
+			
+			push @$security_groups, $security_group;
 		}
+		
+		return $security_groups;	
 	}
 }
 
@@ -1181,36 +1031,23 @@ sub get_console_output {
 	
 	my $xml = $self->_sign(Action  => 'GetConsoleOutput', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			return decode_base64($xml->{output});
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			my $console_output = Net::Amazon::EC2::ConsoleOutput->new(
-				instance_id	=> $xml->{instanceId},
-				timestamp	=> $xml->{timestamp},
-				output		=> decode_base64($xml->{output}),
-			);
-			
-			return $console_output;
-		}
+		my $console_output = Net::Amazon::EC2::ConsoleOutput->new(
+			instance_id	=> $xml->{instanceId},
+			timestamp	=> $xml->{timestamp},
+			output		=> decode_base64($xml->{output}),
+		);
+		
+		return $console_output;
 	}
 }
 
 =head2 modify_image_attribute(%params)
 
-This method modifies attributes of an AMI on EC2.  Right now the only attribute that can be modified is to grant launch permissions.  It takes the following parameters:
+This method modifies attributes of an machine image.
 
 =over
 
@@ -1258,33 +1095,15 @@ sub modify_image_attribute {
 	
 	my $xml = $self->_sign(Action  => 'ModifyImageAttribute', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -1323,33 +1142,15 @@ sub reboot_instances {
 	
 	my $xml = $self->_sign(Action  => 'RebootInstances', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -1378,24 +1179,11 @@ sub register_image {
 		
 	my $xml	= $self->_sign(Action  => 'RegisterImage', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			return $xml->{imageId};
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
-		}
-		else {
-			return $xml->{imageId};
-		}
+		return $xml->{imageId};
 	}
 }
 
@@ -1412,7 +1200,7 @@ The image id of the AMI you wish to reset the attributes on.
 
 =item Attribute (required)
 
-The attribute you want to reset.  Right now the only attribute which can be modified is launchPermission.
+The attribute you want to reset.
 
 =back
 
@@ -1429,33 +1217,15 @@ sub reset_image_attribute {
 	
 	my $xml = $self->_sign(Action  => 'ResetImageAttribute', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -1525,33 +1295,15 @@ sub revoke_security_group_ingress {
 	
 	my $xml = $self->_sign(Action  => 'RevokeSecurityGroupIngress', %args);
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			if ($xml->{return} eq 'true') {
-				return 1;
-			}
-			else {
-				return undef;
-			}
+			return undef;
 		}
 	}
 }
@@ -1586,11 +1338,7 @@ An scalar or array ref. Will associate this instance with the group names passed
 
 Optional data to pass into the instance being started.  Needs to be base64 encoded.
 
-=item AddressingType (optional)
-
-Optional addressing scheme to launch the instance.  If passed in it should have a value of either "direct" or "public".
-
-=item instanceType (optional)
+=item InstanceType (optional)
 
 Specifies the type of instance to start.  The options are:
 
@@ -1600,15 +1348,43 @@ Specifies the type of instance to start.  The options are:
 
 1 EC2 Compute Unit (1 virtual core with 1 EC2 Compute Unit). 32-bit, 1.7GB RAM, 160GB disk
 
-=item m1.large
+=item m1.large: Standard Large Instance
 
-4 EC2 Compute Units (2 virtual core with 2 EC2 Compute Units each). 64-bit, 7.5GB RAM, 850GB disk
+4 EC2 Compute Units (2 virtual cores with 2 EC2 Compute Units each). 64-bit, 7.5GB RAM, 850GB disk
 
-=item m1.xlarge
+=item m1.xlarge: Standard Extra Large Instance
 
-8 EC2 Compute Units (4 virtual core with 2 EC2 Compute Units each). 64-bit, 15GB RAM, 1690GB disk
+8 EC2 Compute Units (4 virtual cores with 2 EC2 Compute Units each). 64-bit, 15GB RAM, 1690GB disk
+
+=item c1.medium: High-CPU Medium Instance
+
+5 EC2 Compute Units (2 virutal cores with 2.5 EC2 Compute Units each). 32-bit, 1.7GB RAM, 350GB disk
+
+=item c1.xlarge: High-CPU Extra Large Instance
+
+20 EC2 Compute Units (8 virtual cores with 2.5 EC2 Compute Units each). 64-bit, 7GB RAM, 1690GB disk
 
 =back 
+
+=item Placement.AvailabilityZone (optional)
+
+The availability zone you want to run the instance in
+
+=item KernelId (optional)
+
+The id of the kernel you want to launch the instance with
+
+=item RamdiskId (optional)
+  
+The id of the ramdisk you want to launch the instance with
+
+=item BlockDeviceMapping.VirtualName (optional)
+
+This is the virtual name for a blocked device to be attached, may pass in a scalar or arrayref
+
+=item BlockDeviceMapping.DeviceName (optional)
+
+This is the device name for a block device to be attached, may pass in a scalar or arrayref
 
 =back
 
@@ -1619,14 +1395,18 @@ Returns a Net::Amazon::EC2::ReservationInfo object
 sub run_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		ImageId			=> { type => SCALAR },
-		MinCount		=> { type => SCALAR },
-		MaxCount		=> { type => SCALAR },
-		KeyName			=> { type => SCALAR, optional => 1 },
-		SecurityGroup	=> { type => SCALAR | ARRAYREF, optional => 1 },
-		UserData		=> { type => SCALAR, optional => 1 },
-		AddressingType	=> { type => SCALAR, optional => 1 },
-		InstanceType	=> { type => SCALAR, optional => 1 },
+		ImageId								=> { type => SCALAR },
+		MinCount							=> { type => SCALAR },
+		MaxCount							=> { type => SCALAR },
+		KeyName								=> { type => SCALAR, optional => 1 },
+		SecurityGroup						=> { type => SCALAR | ARRAYREF, optional => 1 },
+		UserData							=> { type => SCALAR, optional => 1 },
+		InstanceType						=> { type => SCALAR, optional => 1 },
+		'Placement.AvailabilityZone'		=> { type => SCALAR, optional => 1 },
+		KernelId							=> { type => SCALAR, optional => 1 },
+		RamdiskId							=> { type => SCALAR, optional => 1 },
+		'BlockDeviceMapping.VirtualName'	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.DeviceName'		=> { type => SCALAR | ARRAYREF, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -1639,102 +1419,102 @@ sub run_instances {
 		}
 	}
 
+	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.VirtualName.n format
+	if (ref ($args{'BlockDeviceMapping.VirtualName'}) eq 'ARRAY') {
+		my $virtual_names	= delete $args{'BlockDeviceMapping.VirtualName'};
+		my $count			= 1;
+		foreach my $virtual_name (@{$virtual_names}) {
+			$args{"BlockDeviceMapping." . $count . ".VirtualName"} = $virtual_name;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.DeviceName.n format
+	if (ref ($args{'BlockDeviceMapping.DeviceName'}) eq 'ARRAY') {
+		my $device_names	= delete $args{'BlockDeviceMapping.DeviceName'};
+		my $count			= 1;
+		foreach my $device_name (@{$device_names}) {
+			$args{"BlockDeviceMapping." . $count . ".DeviceName"} = $device_name;
+			$count++;
+		}
+	}
+
 	my $xml = $self->_sign(Action  => 'RunInstances', %args);
 	
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			# Lets create our custom data struct here
-			my $struct;
-			
-			$struct->{reservationId} = $xml->{reservationId};
-			$struct->{ownerId} = $xml->{ownerId};
-			$struct->{instance} = $xml->{instancesSet}{item};
-			foreach my $group_arr (@{$xml->{groupSet}{item}}) {
-				push @{$struct->{groups}}, $group_arr->{groupId};
-			}
-			
-			return $struct;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		my $group_sets;
+		foreach my $group_arr (@{$xml->{groupSet}{item}}) {
+			my $group = Net::Amazon::EC2::GroupSet->new(
+				group_id => $group_arr->{groupId},
+			);
+			push @$group_sets, $group;
 		}
-		else {
-			my $group_sets;
-			foreach my $group_arr (@{$xml->{groupSet}{item}}) {
-				my $group = Net::Amazon::EC2::GroupSet->new(
-					group_id => $group_arr->{groupId},
-				);
-				push @$group_sets, $group;
-			}
-	
-			my $running_instances;
-			foreach my $instance_elem (@{$xml->{instancesSet}{item}}) {
-				my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
-					code	=> $instance_elem->{instanceState}{code},
-					name	=> $instance_elem->{instanceState}{name},
-				);
-				
-				my $product_codes;
-				
-				if (grep { defined && length } $instance_elem->{productCodes} ) {
-					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
-						my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
-						push @$product_codes, $product_code;
-					}
-				}
-	
-				unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
-					$instance_elem->{reason} = undef;
-				}
-	
-				unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH') {
-					$instance_elem->{privateDnsName} = undef;
-				}
-	
-				unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH') {
-					$instance_elem->{dnsName} = undef;
-				}
-				
-				my $running_instance = Net::Amazon::EC2::RunningInstances->new(
-					instance_id			=> $instance_elem->{instanceId},
-					image_id			=> $instance_elem->{imageId},
-					instance_state		=> $instance_state_type,
-					private_dns_name	=> $instance_elem->{privateDnsName},
-					dns_name			=> $instance_elem->{dnsName},
-					reason				=> $instance_elem->{reason},
-					key_name			=> $instance_elem->{keyName},
-					ami_launch_index	=> $instance_elem->{amiLaunchIndex},
-					instance_type		=> $instance_elem->{instanceType},
-					launch_time			=> $instance_elem->{launchTime},
-				);
-	
-				if ($product_codes) {
-					$running_instance->product_codes($product_codes);
-				}
-				
-				push @$running_instances, $running_instance;
-			}
-			
-			my $reservation = Net::Amazon::EC2::ReservationInfo->new(
-				reservation_id	=> $xml->{reservationId},
-				owner_id		=> $xml->{ownerId},
-				group_set		=> $group_sets,
-				instances_set	=> $running_instances,
+
+		my $running_instances;
+		foreach my $instance_elem (@{$xml->{instancesSet}{item}}) {
+			my $instance_state_type = Net::Amazon::EC2::InstanceState->new(
+				code	=> $instance_elem->{instanceState}{code},
+				name	=> $instance_elem->{instanceState}{name},
 			);
 			
-			return $reservation;
+			my $product_codes;
+			
+			if (grep { defined && length } $instance_elem->{productCodes} ) {
+				foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
+					my $product_code = Net::Amazon::EC2::ProductCode->new( product_code => $pc->{productCode} );
+					push @$product_codes, $product_code;
+				}
+			}
+
+			unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
+				$instance_elem->{reason} = undef;
+			}
+
+			unless ( grep { defined && length } $instance_elem->{privateDnsName} and ref $instance_elem->{privateDnsName} ne 'HASH') {
+				$instance_elem->{privateDnsName} = undef;
+			}
+
+			unless ( grep { defined && length } $instance_elem->{dnsName} and ref $instance_elem->{dnsName} ne 'HASH') {
+				$instance_elem->{dnsName} = undef;
+			}
+
+
+			my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
+			
+			my $running_instance = Net::Amazon::EC2::RunningInstances->new(
+				ami_launch_index	=> $instance_elem->{amiLaunchIndex},
+				dns_name			=> $instance_elem->{dnsName},
+				image_id			=> $instance_elem->{imageId},
+				instance_id			=> $instance_elem->{instanceId},
+				instance_state		=> $instance_state_type,
+				instance_type		=> $instance_elem->{instanceType},
+				key_name			=> $instance_elem->{keyName},
+				launch_time			=> $instance_elem->{launchTime},
+				placement			=> $placement_response,
+				private_dns_name	=> $instance_elem->{privateDnsName},
+				reason				=> $instance_elem->{reason},
+			);
+
+			if ($product_codes) {
+				$running_instance->product_codes($product_codes);
+			}
+			
+			push @$running_instances, $running_instance;
 		}
+		
+		my $reservation = Net::Amazon::EC2::ReservationInfo->new(
+			reservation_id	=> $xml->{reservationId},
+			owner_id		=> $xml->{ownerId},
+			group_set		=> $group_sets,
+			instances_set	=> $running_instances,
+		);
+		
+		return $reservation;
 	}
 }
-
 
 =head2 terminate_instances(%params)
 
@@ -1770,61 +1550,284 @@ sub terminate_instances {
 	
 	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);	
 
-	if ($self->use_old_api) {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			$self->_debug("ERROR: $xml->{Errors}{Error}{Message}");
-			$self->{error} = $xml->{Errors}{Error}{Message};
-	
-			return undef;
-		}
-		else {
-			my $structs;
-			
-			$structs = $xml->{instancesSet}{item};
-	
-			return $structs;
-		}
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
 	}
 	else {
-		if ( grep { defined && length } $xml->{Errors} ) {
-			return $self->_parse_errors($xml);
+		my $terminated_instances;
+		
+		foreach my $inst (@{$xml->{instancesSet}{item}}) {
+			my $terminated_instance = Net::Amazon::EC2::TerminateInstancesResponse->new(
+				instance_id	=> $inst->{instanceId},
+			);
+			
+			push @$terminated_instances, $terminated_instance;
+		}
+		
+		return $terminated_instances;
+	}
+}
+
+=head2 allocate_address()
+
+Acquires an elastic IP address which can be associated with an instance to create a movable static IP. Takes no arguments
+
+Returns the IP address obtained.
+
+=cut
+
+sub allocate_address {
+	my $self = shift;
+
+	my $xml = $self->_sign(Action  => 'AllocateAddress');
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		return $xml->{publicIp};
+	}
+}
+
+=head2 associate_address(%params)
+
+Associates an elastic IP address with an instance. It takes the following arguments:
+
+=over
+
+=item InstanceId (required)
+
+The instance id you wish to associate the IP address with
+
+=item PublicIp (required)
+
+The IP address to associate with
+
+=back
+
+Returns true if the association succeeded.
+
+=cut
+
+sub associate_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId		=> { type => SCALAR },
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'AssociateAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
 		}
 		else {
-			my $terminated_instances;
-			
-			foreach my $inst (@{$xml->{instancesSet}{item}}) {
-				my $terminated_instance = Net::Amazon::EC2::TerminateInstancesResponse->new(
-					instance_id	=> $inst->{instanceId},
-				);
-				
-				push @$terminated_instances, $terminated_instance;
-			}
-			
-			return $terminated_instances;
+			return undef;
 		}
 	}
 }
+
+=head2 describe_addresses(%params)
+
+This method describes the elastic addresses currently allocated and any instances associated with them. It takes the following arguments:
+
+=over
+
+=item PublicIp (optional)
+
+The IP address to describe. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
+
+=cut
+
+sub describe_addresses {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
+	if (ref ($args{PublicIp}) eq 'ARRAY') {
+		my $ip_addresses	= delete $args{PublicIp};
+		my $count			= 1;
+		foreach my $ip_address (@{$ip_addresses}) {
+			$args{"PublicIp." . $count} = $ip_address;
+			$count++;
+		}
+	}
+	
+	my $addresses;
+	my $xml = $self->_sign(Action  => 'DescribeAddresses', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		foreach my $addy (@{$xml->{addressesSet}{item}}) {
+			if (ref($addy->{instanceId}) eq 'HASH') {
+				undef $addy->{instanceId};
+			}
+			
+			my $address = Net::Amazon::EC2::DescribeAddress->new(
+				public_ip	=> $addy->{publicIp},
+				instance_id	=> $addy->{instanceId},
+			);
+			
+			push @$addresses, $address;
+		}
+		
+		return $addresses;
+	}
+}
+
+=head2 describe_availability_zones(%params)
+
+This method describes the availability zones currently available to choose from. It takes the following arguments:
+
+=over
+
+=item ZoneName (optional)
+
+The zone name to describe. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::AvailabilityZone objects
+
+=cut
+
+sub describe_availability_zones {
+	my $self = shift;
+	my %args = validate( @_, {
+		ZoneName	=> { type => SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of zone names lets split them out into their ZoneName.n format
+	if (ref ($args{ZoneName}) eq 'ARRAY') {
+		my $zone_names		= delete $args{ZoneName};
+		my $count			= 1;
+		foreach my $zone_name (@{$zone_names}) {
+			$args{"ZoneName." . $count} = $zone_name;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeAvailabilityZones', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $availability_zones;
+		foreach my $az (@{$xml->{availabilityZoneInfo}{item}}) {
+			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
+				zone_name	=> $az->{zoneName},
+				zone_state	=> $az->{zoneState},
+			);
+			
+			push @$availability_zones, $availability_zone;
+		}
+		
+		return $availability_zones;
+	}
+}
+
+=head2 disassociate_address(%params)
+
+Disassociates an elastic IP address with an instance. It takes the following arguments:
+
+=over
+
+=item PublicIp (required)
+
+The IP address to disassociate
+
+=back
+
+Returns true if the disassociation succeeded.
+
+=cut
+
+sub disassociate_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 release_address(%params)
+
+Releases an allocated IP address. It takes the following arguments:
+
+=over
+
+=item PublicIp (required)
+
+The IP address to release
+
+=back
+
+Returns true if the releasing succeeded.
+
+=cut
+
+sub release_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'ReleaseAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
 
 no Moose;
 1;
 
 __END__
 
-=head1 TODO
+=head1 BACKWARDS INCOMPATIBILITY NOTICE
 
-=over
-
-=item * Add more documentation of the return type modules.
-
-=back
-
-=head1 UPCOMING BACKWARDS INCOMPATIBILITY NOTICE
-
-I've implemented the returned data structures as objects as opposed to data structures.  In this release I am supporting both the deprecated and the new object-based returned data.  In the next release (0.07) the data structures _WILL NO LONGER BE SUPPORTED_
+I've implemented the returned data as objects _ONLY_.  In this release (0.07) the data structures style of accessing _ARE NO LONGER BE SUPPORTED_
 
 =head1 TESTING
 
-Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of Feb 15th, 2008 costs a total of $0.20 USD
+Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) 
+in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of 
+July 23th, 2008 costs a total of $0.20 USD
 
 =head1 AUTHOR
 
@@ -1837,4 +1840,4 @@ under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/2007-08-29/DeveloperGuide/>
+Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/2008-02-01/DeveloperGuide/>
