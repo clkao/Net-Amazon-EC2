@@ -11,6 +11,7 @@ use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF);
+
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
 use Net::Amazon::EC2::GroupSet;
@@ -37,8 +38,11 @@ use Net::Amazon::EC2::DescribeAddress;
 use Net::Amazon::EC2::AvailabilityZone;
 use Net::Amazon::EC2::BlockDeviceMapping;
 use Net::Amazon::EC2::PlacementResponse;
+use Net::Amazon::EC2::Volume;
+use Net::Amazon::EC2::Attachment;
+use Net::Amazon::EC2::Snapshot;
 
-$VERSION = '0.07';
+$VERSION = '0.08';
 
 =head1 NAME
 
@@ -47,9 +51,8 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.07 of Net::Amazon::EC2, released
-July 23, 2008. This module is coded against the Query version of the '2008-02-01' version of the EC2 API which was last
-update May 29th 2008.
+This document describes version 0.08 of Net::Amazon::EC2, released
+August 21st, 2008. This module is coded against the Query version of the '2008-05-05' of the EC2 API which was last updated June 10th 2008.
 
 =head1 SYNOPSIS
 
@@ -113,7 +116,7 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2008-02-01' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2008-05-05' );
 has 'base_url'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'http://ec2.amazonaws.com' );
 has 'timestamp'			=> ( is => 'ro', isa => 'Str', required => 1, default => sub { my $ts = time2isoz(); chop($ts); $ts .= '.000Z'; $ts =~ s/\s+/T/g; return $ts; } );
 
@@ -195,7 +198,7 @@ sub _debug {
 	my $message	= shift;
 	
 	if ((grep { defined && length} $self->debug) && $self->debug == 1) {
-		print "$message\n";
+		print "$message\n\n\n\n";
 	}
 }
 
@@ -1813,21 +1816,450 @@ sub release_address {
 	}
 }
 
+=head2 describe_volumes(%params)
+
+Describes the volumes currently created. It takes the following arguments:
+
+=over
+
+=item VolumeId (optional)
+
+Either a scalar or array ref of volume id's can be passed in. If this isn't passed in
+it will describe all the current volumes.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::Volume objects.
+
+=cut
+
+sub describe_volumes {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of volumes lets split them out into their Volume.n format
+	if (ref ($args{VolumeId}) eq 'ARRAY') {
+		my $volumes		= delete $args{VolumeId};
+		my $count			= 1;
+		foreach my $volume (@{$volumes}) {
+			$args{"VolumeId." . $count} = $volume;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $volumes;
+
+		foreach my $volume_set (@{$xml->{volumeSet}{item}}) {
+			my $attachments;
+			unless ( grep { defined && length } $volume_set->{snapshotId} and ref $volume_set->{snapshotId} ne 'HASH') {
+				$volume_set->{snapshotId} = undef;
+			}
+		
+			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
+ 				my $attachment = Net::Amazon::EC2::Attachment->new(
+ 					volume_id	=> $attachment_set->{volumeId},
+ 					status		=> $attachment_set->{status},
+ 					instance_id	=> $attachment_set->{instanceId},
+ 					attach_time	=> $attachment_set->{attachTime},
+ 					device		=> $attachment_set->{device},
+ 				);
+ 				
+ 				push @$attachments, $attachment;
+			}
+			
+			my $volume = Net::Amazon::EC2::Volume->new(
+				volume_id		=> $volume_set->{volumeId},
+				status			=> $volume_set->{status},
+				zone			=> $volume_set->{availabilityZone},
+				create_time		=> $volume_set->{createTime},
+				snapshot_id		=> $volume_set->{snapshotId},
+				size			=> $volume_set->{size},
+				attachments		=> $attachments,
+			);
+			
+			push @$volumes, $volume;
+		}
+		
+		return $volumes;
+	}
+}
+
+=head2 create_volume(%params)
+
+Creates a volume.
+
+=over
+
+=item Size (required)
+
+The size in GiB of the volume you want to create.
+
+=item SnapshotId (optional)
+
+The optional snapshot id to create the volume from.
+
+=item Zone (required)
+
+The zone to create the volume in.
+
+=back
+
+Returns true if the releasing succeeded.
+
+=cut
+
+sub create_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		Size				=> { type => SCALAR },
+		SnapshotId			=> { type => SCALAR, optional => 1 },
+		AvailabilityZone	=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+
+		unless ( grep { defined && length } $xml->{snapshotId} and ref $xml->{snapshotId} ne 'HASH') {
+			$xml->{snapshotId} = undef;
+		}
+
+		my $volume = Net::Amazon::EC2::Volume->new(
+			volume_id		=> $xml->{volumeId},
+			status			=> $xml->{status},
+			zone			=> $xml->{availabilityZone},
+			create_time		=> $xml->{createTime},
+			snapshot_id		=> $xml->{snapshotId},
+			size			=> $xml->{size},
+		);
+
+		return $volume;
+	}
+}
+
+
+=head2 delete_volume(%params)
+
+Delete a volume.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to delete.
+
+=back
+
+Returns true if the deleting succeeded.
+
+=cut
+
+sub delete_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DeleteVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 attach_volume(%params)
+
+Attach a volume to an instance.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to attach.
+
+=item InstanceId (required)
+
+The instance id you wish to attach the volume to.
+
+=item Device (required)
+
+The device id you want the volume attached as.
+
+=back
+
+Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
+
+=cut
+
+sub attach_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR },
+		Device		=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'AttachVolume', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $attachment = Net::Amazon::EC2::Attachment->new(
+			volume_id	=> $xml->{volumeId},
+			status		=> $xml->{status},
+			instance_id	=> $xml->{instanceId},
+			attach_time	=> $xml->{attachTime},
+			device		=> $xml->{device},
+		);
+		
+		return $attachment;
+	}
+}
+
+=head2 detach_volume(%params)
+
+Detach a volume from an instance.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to detach.
+
+=item InstanceId (optional)
+
+The instance id you wish to detach from.
+
+=item Device (optional)
+
+The device the volume was attached as.
+
+=item Force (optional)
+
+A boolean for if to forcibly detach the volume from the instance.
+WARNING: This can lead to data loss or a corrupted file system.
+	   Use this option only as a last resort to detach a volume
+	   from a failed instance.  The instance will not have an
+	   opportunity to flush file system caches nor file system
+	   meta data.
+
+=back
+
+Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
+
+=cut
+
+sub detach_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR, optional => 1 },
+		Device		=> { type => SCALAR, optional => 1 },
+		Force		=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DetachVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $attachment = Net::Amazon::EC2::Attachment->new(
+			volume_id	=> $xml->{volumeId},
+			status		=> $xml->{status},
+			instance_id	=> $xml->{instanceId},
+			attach_time	=> $xml->{attachTime},
+			device		=> $xml->{device},
+		);
+		
+		return $attachment;
+	}
+}
+
+=head2 describe_snapshots(%params)
+
+Describes the snapshots currently created. It takes the following arguments:
+
+=over
+
+=item SnapshotId (optional)
+
+Either a scalar or array ref of snapshot id's can be passed in. If this isn't passed in
+it will describe all the current snapshots.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::Snapshot objects.
+
+=cut
+
+sub describe_snapshots {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
+	if (ref ($args{SnapshotId}) eq 'ARRAY') {
+		my $snapshots		= delete $args{SnapshotId};
+		my $count			= 1;
+		foreach my $snapshot (@{$snapshots}) {
+			$args{"SnapshotId." . $count} = $snapshot;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $snapshots;
+
+ 		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
+ 			my $snapshot = Net::Amazon::EC2::Snapshot->new(
+ 				snapshot_id		=> $snap->{snapshotId},
+ 				status			=> $snap->{status},
+ 				volume_id		=> $snap->{volumeId},
+ 				start_time		=> $snap->{startTime},
+ 				progress		=> $snap->{progress},
+ 			);
+ 			
+ 			push @$snapshots, $snapshot;
+ 		}
+ 		
+ 		return $snapshots;
+	}
+}
+
+=head2 create_snapshot(%params)
+
+Create a snapshot of a volume. It takes the following arguments:
+
+=over
+
+=item VolumeId (required)
+
+The volume id of the volume you want to take a snapshot of.
+
+=back
+
+Returns a Net::Amazon::EC2::Snapshot object of the newly created snapshot.
+
+=cut
+
+sub create_snapshot {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		unless ( grep { defined && length } $xml->{progress} and ref $xml->{progress} ne 'HASH') {
+			$xml->{progress} = undef;
+		}
+
+		my $snapshot = Net::Amazon::EC2::Snapshot->new(
+			snapshot_id		=> $xml->{snapshotId},
+			status			=> $xml->{status},
+			volume_id		=> $xml->{volumeId},
+			start_time		=> $xml->{startTime},
+			progress		=> $xml->{progress},
+		);
+
+  		return $snapshot;
+	}
+}
+
+=head2 delete_snapshot(%params)
+
+Deletes the snapshots passed in. It takes the following arguments:
+
+=over
+
+=item SnapshotId (required)
+
+Either a scalar or array ref of snapshot id's can be passed in. Will delete the corresponding
+snapshots.
+
+=back
+
+Returns true if the deleting succeeded.
+
+=cut
+
+sub delete_snapshot {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId	=> { type => ARRAYREF | SCALAR },
+	});
+
+	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
+	if (ref ($args{SnapshotId}) eq 'ARRAY') {
+		my $snapshots		= delete $args{SnapshotId};
+		my $count			= 1;
+		foreach my $snapshot (@{$snapshots}) {
+			$args{"SnapshotId." . $count} = $snapshot;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DeleteSnapshot', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
 
 no Moose;
 1;
 
 __END__
 
-=head1 BACKWARDS INCOMPATIBILITY NOTICE
-
-I've implemented the returned data as objects _ONLY_.  In this release (0.07) the data structures style of accessing _ARE NO LONGER BE SUPPORTED_
-
 =head1 TESTING
 
-Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) 
-in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of 
-July 23th, 2008 costs a total of $0.20 USD
+Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of August 21st, 2008 costs a total of $0.20 USD
 
 =head1 AUTHOR
 
@@ -1840,4 +2272,4 @@ under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/2008-02-01/DeveloperGuide/>
+Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/2008-05-05/DeveloperGuide/>

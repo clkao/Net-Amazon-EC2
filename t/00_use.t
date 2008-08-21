@@ -30,6 +30,9 @@ BEGIN {
 		Net::Amazon::EC2::TerminateInstancesResponse
 		Net::Amazon::EC2::UserData
 		Net::Amazon::EC2::UserIdGroupPair		
+		Net::Amazon::EC2::Volume
+		Net::Amazon::EC2::Attachment
+		Net::Amazon::EC2::Snapshot
 	);
 
 	plan tests => scalar @modules;
