@@ -42,7 +42,7 @@ use Net::Amazon::EC2::Volume;
 use Net::Amazon::EC2::Attachment;
 use Net::Amazon::EC2::Snapshot;
 
-$VERSION = '0.08';
+$VERSION = '0.09';
 
 =head1 NAME
 
@@ -51,8 +51,8 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.08 of Net::Amazon::EC2, released
-August 21st, 2008. This module is coded against the Query version of the '2008-05-05' of the EC2 API which was last updated June 10th 2008.
+This document describes version 0.09 of Net::Amazon::EC2, released
+August 22nd, 2008. This module is coded against the Query version of the '2008-05-05' EC2 API which was last updated June 10th 2008.
 
 =head1 SYNOPSIS
 
@@ -1907,9 +1907,9 @@ The size in GiB of the volume you want to create.
 
 The optional snapshot id to create the volume from.
 
-=item Zone (required)
+=item AvailabilityZone (required)
 
-The zone to create the volume in.
+The availability zone to create the volume in.
 
 =back
 
