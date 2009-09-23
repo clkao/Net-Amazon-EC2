@@ -14,7 +14,7 @@ A class representing the response from a request to attach a product code to a r
 
 =over
 
-=item result (required)
+=item return (required)
 
 true if the product code is attached to the instance, false if it is 
 not.
@@ -28,7 +28,7 @@ is sucessfully attached to the instance.
 
 =cut
 
-has 'result'	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'return'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'owner_id'	=> ( is => 'ro', isa => 'Str', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
@@ -39,7 +39,7 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2008 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

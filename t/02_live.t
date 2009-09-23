@@ -7,7 +7,7 @@ BEGIN {
         plan skip_all => "Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run these _LIVE_ tests (NOTE: they will incur one instance hour of costs from EC2)";
     }
     else {
-        plan tests => 18;
+        plan tests => 20;
         use_ok( 'Net::Amazon::EC2' );
     }
 };
@@ -116,5 +116,23 @@ foreach my $availability_zone (@{$availability_zones}) {
 	}
 }
 ok($seen_availability_zone == 1, "Describing availability zones");
+
+my $regions = $ec2->describe_regions();
+my $seen_region = 0;
+foreach my $region (@{$regions}) {
+	if ($region->region_name eq 'us-east-1') {
+		$seen_region = 1;
+	}
+}
+ok($seen_region == 1, "Describing regions");
+
+my $reserved_instance_offerings = $ec2->describe_reserved_instances_offerings();
+my $seen_offering = 0;
+foreach my $offering (@{$reserved_instance_offerings}) {
+	if ($offering->product_description eq 'Linux/UNIX') {
+		$seen_offering = 1;
+	}
+}
+ok($seen_offering == 1, "Describing Reserved Instances Offerings");
 
 # THE REST OF THE METHODS ARE SKIPPED FOR NOW SINCE IT WOULD REQUIRE A DECENT AMOUNT OF TIME IN BETWEEN OPERATIONS TO COMPLETE

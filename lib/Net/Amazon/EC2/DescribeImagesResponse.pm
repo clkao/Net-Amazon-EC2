@@ -66,6 +66,10 @@ The kernel id associated with this AMI (if any). This is only defined for machin
 
 The ramdisk id associated with this AMI (if any). This is only defined for machine type AMIs.
 
+=item platform (optional)
+
+The operating system of the instance.
+
 =back
 
 =cut
@@ -85,6 +89,7 @@ has 'architecture'		=> ( is => 'ro', isa => 'Str', required => 0 );
 has 'image_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'kernel_id'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'ramdisk_id'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'platform'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
@@ -94,7 +99,7 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2008 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

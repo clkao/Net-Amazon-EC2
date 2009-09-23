@@ -1,27 +1,32 @@
-package Net::Amazon::EC2::IpRange;
+package Net::Amazon::EC2::Region;
 use Moose;
 
 =head1 NAME
 
-Net::Amazon::EC2::IpRange
+Net::Amazon::EC2::Region
 
 =head1 DESCRIPTION
 
-A class representing an IP range (CIDR).
+A class representing a EC2 region
 
 =head1 ATTRIBUTES
 
 =over
 
-=item cidr_ip (required)
+=item region_name (required)
 
-CIDR IP Range.
+The name of the region.
+
+=item region_endpoint (required)
+
+The region service endpoint.
 
 =back
 
 =cut
 
-has 'cidr_ip'  => ( is => 'ro', isa => 'Str' );
+has 'region_name'		=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'region_endpoint'	=> ( is => 'ro', isa => 'Str', required => 1 );
 
 __PACKAGE__->meta->make_immutable();
 

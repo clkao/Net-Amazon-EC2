@@ -41,8 +41,15 @@ use Net::Amazon::EC2::PlacementResponse;
 use Net::Amazon::EC2::Volume;
 use Net::Amazon::EC2::Attachment;
 use Net::Amazon::EC2::Snapshot;
+use Net::Amazon::EC2::BundleInstanceResponse;
+use Net::Amazon::EC2::Region;
+use Net::Amazon::EC2::ReservedInstance;
+use Net::Amazon::EC2::ReservedInstanceOffering;
+use Net::Amazon::EC2::MonitoredInstance;
+use Net::Amazon::EC2::InstancePassword;
+use Data::Dumper qw(Dumper);
 
-$VERSION = '0.09';
+$VERSION = '0.10';
 
 =head1 NAME
 
@@ -51,8 +58,10 @@ environment.
 
 =head1 VERSION
 
-This document describes version 0.09 of Net::Amazon::EC2, released
-August 22nd, 2008. This module is coded against the Query version of the '2008-05-05' EC2 API which was last updated June 10th 2008.
+
+This document describes version 0.10 of Net::Amazon::EC2, released
+September 23rd, 2009. This module is coded against the Query API version of the '2009-07-15' 
+version of the EC2 API last updated September 3, 2009.
 
 =head1 SYNOPSIS
 
@@ -116,7 +125,7 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2008-05-05' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-07-15' );
 has 'base_url'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'http://ec2.amazonaws.com' );
 has 'timestamp'			=> ( is => 'ro', isa => 'Str', required => 1, default => sub { my $ts = time2isoz(); chop($ts); $ts .= '.000Z'; $ts =~ s/\s+/T/g; return $ts; } );
 
@@ -156,11 +165,32 @@ sub _sign {
 	my $ur	= $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
 	my $ua	= LWP::UserAgent->new();
-	my $res	= $ua->get($ur);
-	
+	my $res	= $ua->post($ur);
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(ForceArray => qr/(?:item|Errors)/i);
-	my $ref	= $xs->XMLin($res->content());
+	my $xml;
+	
+	# Check the result for connectivity problems, if so throw an error
+ 	if ($res->code >= 500) {
+ 		my $message = $res->status_line;
+		$xml = <<EOXML;
+<xml>
+	<RequestID>N/A</RequestID>
+	<Errors>
+		<Error>
+			<Code>HTTP POST FAILURE</Code>
+			<Message>$message</Message>
+		</Error>
+	</Errors>
+</xml>
+EOXML
+
+ 	}
+	else {
+		$xml = $res->content();
+	}
+
+	my $ref = $xs->XMLin($xml);
 
 	return $ref;
 }
@@ -215,6 +245,119 @@ sub _hashit {
 }
 
 =head1 OBJECT METHODS
+
+=head2 allocate_address()
+
+Acquires an elastic IP address which can be associated with an instance to create a movable static IP. Takes no arguments
+
+Returns the IP address obtained.
+
+=cut
+
+sub allocate_address {
+	my $self = shift;
+
+	my $xml = $self->_sign(Action  => 'AllocateAddress');
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		return $xml->{publicIp};
+	}
+}
+
+=head2 associate_address(%params)
+
+Associates an elastic IP address with an instance. It takes the following arguments:
+
+=over
+
+=item InstanceId (required)
+
+The instance id you wish to associate the IP address with
+
+=item PublicIp (required)
+
+The IP address to associate with
+
+=back
+
+Returns true if the association succeeded.
+
+=cut
+
+sub associate_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId		=> { type => SCALAR },
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'AssociateAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 attach_volume(%params)
+
+Attach a volume to an instance.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to attach.
+
+=item InstanceId (required)
+
+The instance id you wish to attach the volume to.
+
+=item Device (required)
+
+The device id you want the volume attached as.
+
+=back
+
+Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
+
+=cut
+
+sub attach_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR },
+		Device		=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'AttachVolume', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $attachment = Net::Amazon::EC2::Attachment->new(
+			volume_id	=> $xml->{volumeId},
+			status		=> $xml->{status},
+			instance_id	=> $xml->{instanceId},
+			attach_time	=> $xml->{attachTime},
+			device		=> $xml->{device},
+		);
+		
+		return $attachment;
+	}
+}
 
 =head2 authorize_security_group_ingress(%params)
 
@@ -294,6 +437,132 @@ sub authorize_security_group_ingress {
 	}
 }
 
+=head2 bundle_instance(%params)
+
+Bundles the Windows instance. This procedure is not applicable for Linux and UNIX instances.
+
+NOTE NOTE NOTE This is not well tested as I don't run windows instances
+
+=over
+
+=item InstanceId (required)
+
+The ID of the instance to bundle.
+
+=item Storage.S3.Bucket (required)
+
+The bucket in which to store the AMI. You can specify a bucket that you already own or a new bucket that Amazon EC2 creates on your behalf. If you specify a bucket that belongs to someone else, Amazon EC2 returns an error.
+
+=item Storage.S3.Prefix (required)
+
+Specifies the beginning of the file name of the AMI.
+
+=item Storage.S3.AWSAccessKeyId (required)
+
+The Access Key ID of the owner of the Amazon S3 bucket.
+
+=item Storage.S3.UploadPolicy (required)
+
+An Amazon S3 upload policy that gives Amazon EC2 permission to upload items into Amazon S3 on the user's behalf.
+
+=item Storage.S3.UploadPolicySignature (required)
+
+The signature of the Base64 encoded JSON document.
+
+JSON Parameters: (all are required)
+
+expiration - The expiration of the policy. Amazon recommends 12 hours or longer.
+conditions - A list of restrictions on what can be uploaded to Amazon S3. Must contain the bucket and ACL conditions in this table.
+bucket - The bucket to store the AMI. 
+acl - This must be set to ec2-bundle-read.
+
+=back
+
+Returns a Net::Amazon::EC2::BundleInstanceResponse object
+
+=cut
+
+sub bundle_instance {
+	my $self = shift;
+	my %args = validate( @_, {
+		'InstanceId'						=> { type => SCALAR },
+		'Storage.S3.Bucket'					=> { type => SCALAR },
+		'Storage.S3.Prefix'					=> { type => SCALAR },
+		'Storage.S3.AWSAccessKeyId'			=> { type => SCALAR },
+		'Storage.S3.UploadPolicy'			=> { type => SCALAR },
+		'Storage.S3.UploadPolicySignature'	=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'BundleInstance', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+			instance_id					=> $xml->{bundleInstanceTask}{instanceId},
+			bundle_id					=> $xml->{bundleInstanceTask}{bundleId},
+			state						=> $xml->{bundleInstanceTask}{state},
+			start_time					=> $xml->{bundleInstanceTask}{startTime},
+			update_time					=> $xml->{bundleInstanceTask}{updateTime},
+			progress					=> $xml->{bundleInstanceTask}{progress},
+			s3_bucket					=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_prefix					=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_aws_access_key_id		=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_upload_policy			=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_policy_upload_signature	=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+		);
+		
+		return $bundle;
+	}
+}
+
+=head2 cancel_bundle_task(%params)
+
+Cancels the bundle task. This procedure is not applicable for Linux and UNIX instances.
+
+=over
+
+=item BundleId (required)
+
+The ID of the bundle task to cancel.
+
+=back
+
+Returns a Net::Amazon::EC2::BundleInstanceResponse object
+
+=cut
+
+sub cancel_bundle_task {
+	my $self = shift;
+	my %args = validate( @_, {
+		'BundleId'							=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'CancelBundleTask', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+			instance_id					=> $xml->{bundleInstanceTask}{instanceId},
+			bundle_id					=> $xml->{bundleInstanceTask}{bundleId},
+			state						=> $xml->{bundleInstanceTask}{state},
+			start_time					=> $xml->{bundleInstanceTask}{startTime},
+			update_time					=> $xml->{bundleInstanceTask}{updateTime},
+			progress					=> $xml->{bundleInstanceTask}{progress},
+			s3_bucket					=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_prefix					=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_aws_access_key_id		=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_upload_policy			=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			s3_policy_upload_signature	=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+		);
+		
+		return $bundle;
+	}
+}
+
 =head2 confirm_product_instance(%params)
 
 Checks to see if the product code passed in is attached to the instance id, taking the following parameter:
@@ -328,7 +597,7 @@ sub confirm_product_instance {
 	}
 	else {
 		my $confirm_response = Net::Amazon::EC2::ConfirmProductInstanceResponse->new(
-			result			=> $xml->{result},
+			'return'		=> $xml->{'return'},
 			owner_id		=> $xml->{ownerId},
 		);
 		
@@ -417,6 +686,108 @@ sub create_security_group {
 	}	
 }
 
+=head2 create_snapshot(%params)
+
+Create a snapshot of a volume. It takes the following arguments:
+
+=over
+
+=item VolumeId (required)
+
+The volume id of the volume you want to take a snapshot of.
+
+=back
+
+Returns a Net::Amazon::EC2::Snapshot object of the newly created snapshot.
+
+=cut
+
+sub create_snapshot {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		unless ( grep { defined && length } $xml->{progress} and ref $xml->{progress} ne 'HASH') {
+			$xml->{progress} = undef;
+		}
+
+		my $snapshot = Net::Amazon::EC2::Snapshot->new(
+			snapshot_id		=> $xml->{snapshotId},
+			status			=> $xml->{status},
+			volume_id		=> $xml->{volumeId},
+			start_time		=> $xml->{startTime},
+			progress		=> $xml->{progress},
+		);
+
+  		return $snapshot;
+	}
+}
+
+=head2 create_volume(%params)
+
+Creates a volume.
+
+=over
+
+=item Size (required)
+
+The size in GiB of the volume you want to create.
+
+=item SnapshotId (optional)
+
+The optional snapshot id to create the volume from.
+
+=item AvailabilityZone (required)
+
+The availability zone to create the volume in.
+
+=back
+
+Returns true if the releasing succeeded.
+
+=cut
+
+sub create_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		Size				=> { type => SCALAR },
+		SnapshotId			=> { type => SCALAR, optional => 1 },
+		AvailabilityZone	=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+
+		unless ( grep { defined && length } $xml->{snapshotId} and ref $xml->{snapshotId} ne 'HASH') {
+			$xml->{snapshotId} = undef;
+		}
+
+		my $volume = Net::Amazon::EC2::Volume->new(
+			volume_id		=> $xml->{volumeId},
+			status			=> $xml->{status},
+			zone			=> $xml->{availabilityZone},
+			create_time		=> $xml->{createTime},
+			snapshot_id		=> $xml->{snapshotId},
+			size			=> $xml->{size},
+		);
+
+		return $volume;
+	}
+}
+
 =head2 delete_key_pair(%params)
 
 This method deletes a keypair.  Takes the following parameter:
@@ -492,6 +863,93 @@ sub delete_security_group {
 	}
 }
 
+=head2 delete_snapshot(%params)
+
+Deletes the snapshots passed in. It takes the following arguments:
+
+=over
+
+=item SnapshotId (required)
+
+Either a scalar or array ref of snapshot id's can be passed in. Will delete the corresponding
+snapshots.
+
+=back
+
+Returns true if the deleting succeeded.
+
+=cut
+
+sub delete_snapshot {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId	=> { type => ARRAYREF | SCALAR },
+	});
+
+	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
+	if (ref ($args{SnapshotId}) eq 'ARRAY') {
+		my $snapshots		= delete $args{SnapshotId};
+		my $count			= 1;
+		foreach my $snapshot (@{$snapshots}) {
+			$args{"SnapshotId." . $count} = $snapshot;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DeleteSnapshot', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 delete_volume(%params)
+
+Delete a volume.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to delete.
+
+=back
+
+Returns true if the deleting succeeded.
+
+=cut
+
+sub delete_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DeleteVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
 =head2 deregister_image(%params)
 
 This method will deregister an AMI. It takes the following parameter:
@@ -530,6 +988,167 @@ sub deregister_image {
 	}
 }
 
+=head2 describe_addresses(%params)
+
+This method describes the elastic addresses currently allocated and any instances associated with them. It takes the following arguments:
+
+=over
+
+=item PublicIp (optional)
+
+The IP address to describe. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
+
+=cut
+
+sub describe_addresses {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
+	if (ref ($args{PublicIp}) eq 'ARRAY') {
+		my $ip_addresses	= delete $args{PublicIp};
+		my $count			= 1;
+		foreach my $ip_address (@{$ip_addresses}) {
+			$args{"PublicIp." . $count} = $ip_address;
+			$count++;
+		}
+	}
+	
+	my $addresses;
+	my $xml = $self->_sign(Action  => 'DescribeAddresses', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		foreach my $addy (@{$xml->{addressesSet}{item}}) {
+			if (ref($addy->{instanceId}) eq 'HASH') {
+				undef $addy->{instanceId};
+			}
+			
+			my $address = Net::Amazon::EC2::DescribeAddress->new(
+				public_ip	=> $addy->{publicIp},
+				instance_id	=> $addy->{instanceId},
+			);
+			
+			push @$addresses, $address;
+		}
+		
+		return $addresses;
+	}
+}
+
+=head2 describe_availability_zones(%params)
+
+This method describes the availability zones currently available to choose from. It takes the following arguments:
+
+=over
+
+=item ZoneName (optional)
+
+The zone name to describe. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::AvailabilityZone objects
+
+=cut
+
+sub describe_availability_zones {
+	my $self = shift;
+	my %args = validate( @_, {
+		ZoneName	=> { type => SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of zone names lets split them out into their ZoneName.n format
+	if (ref ($args{ZoneName}) eq 'ARRAY') {
+		my $zone_names		= delete $args{ZoneName};
+		my $count			= 1;
+		foreach my $zone_name (@{$zone_names}) {
+			$args{"ZoneName." . $count} = $zone_name;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeAvailabilityZones', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $availability_zones;
+		foreach my $az (@{$xml->{availabilityZoneInfo}{item}}) {
+			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
+				zone_name	=> $az->{zoneName},
+				zone_state	=> $az->{zoneState},
+				region_name	=> $az->{regionName},
+			);
+			
+			push @$availability_zones, $availability_zone;
+		}
+		
+		return $availability_zones;
+	}
+}
+
+=head2 describe_bundle_tasks(%params)
+
+Describes current bundling tasks. This procedure is not applicable for Linux and UNIX instances.
+
+=over
+
+=item BundleId (optional)
+
+The optional ID of the bundle task to describe.
+
+=back
+
+Returns a array ref of Net::Amazon::EC2::BundleInstanceResponse objects
+
+=cut
+
+sub describe_bundle_tasks {
+	my $self = shift;
+	my %args = validate( @_, {
+		'BundleId'							=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DescribeBundleTasks', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $bundle_tasks;
+		
+		foreach my $item (@{$xml->{bundleInstanceTasksSet}{item}}) {
+			my $bundle = Net::Amazon::EC2::BundleInstanceResponse->new(
+				instance_id					=> $item->{instanceId},
+				bundle_id					=> $item->{bundleId},
+				state						=> $item->{state},
+				start_time					=> $item->{startTime},
+				update_time					=> $item->{updateTime},
+				progress					=> $item->{progress},
+				s3_bucket					=> $item->{storage}{S3}{bucket},
+				s3_prefix					=> $item->{storage}{S3}{bucket},
+				s3_aws_access_key_id		=> $item->{storage}{S3}{bucket},
+				s3_upload_policy			=> $item->{storage}{S3}{bucket},
+				s3_policy_upload_signature	=> $item->{storage}{S3}{bucket},
+			);
+			
+			push @$bundle_tasks, $bundle;
+		}
+				
+		return $bundle_tasks;
+	}
+}
+
 =head2 describe_image_attributes(%params)
 
 This method pulls a list of attributes for the image id specified
@@ -559,6 +1178,8 @@ Valid attributes are:
 =item ramdisk - Describes the ID of RAM disk associated with the AMI.
 
 =item blockDeviceMapping - Defines native device names to use when exposing virtual devices.
+
+=item platform - Describes the operating system platform.
 
 =back
 
@@ -624,6 +1245,7 @@ sub describe_image_attribute {
 			kernel				=> $xml->{kernel},
 			ramdisk				=> $xml->{ramdisk},
 			blockDeviceMapping	=> $block_device_mappings,
+			platform			=> $xml->{platform},
 		);
 
 		return $describe_image_attribute;
@@ -712,6 +1334,7 @@ sub describe_images {
 				image_type		=> $item->{imageType},
 				kernel_id		=> $item->{kernelId},
 				ramdisk_id		=> $item->{ramdiskId},
+				platform		=> $item->{platform},
 			);
 			
 			if (grep { defined && length } $item->{productCodes} ) {
@@ -763,7 +1386,6 @@ sub describe_instances {
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeInstances', %args);
-
 	my $reservations;
 	
 	if ( grep { defined && length } $xml->{Errors} ) {
@@ -825,6 +1447,8 @@ sub describe_instances {
 					placement			=> $placement_response,
 					private_dns_name	=> $instance_elem->{privateDnsName},
 					reason				=> $instance_elem->{reason},
+					platform			=> $instance_elem->{platform},
+					monitoring			=> $instance_elem->{monitoring}{state},
 				);
 
 				if ($product_codes) {
@@ -845,7 +1469,7 @@ sub describe_instances {
 		}
 			
 	}
-	
+
 	return $reservations;
 }
 
@@ -902,6 +1526,188 @@ sub describe_key_pairs {
 	}
 }
 
+=head2 describe_regions(%params)
+
+Describes EC2 regions that are currently available to launch instances in for this account.
+
+=over
+
+=item RegionName (optional)
+
+The name of the region(s) to be described. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::Region objects
+
+=cut
+
+sub describe_regions {
+	my $self = shift;
+	my %args = validate( @_, {
+		RegionName	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of regions lets split them out into their RegionName.n format
+	if (ref ($args{RegionName}) eq 'ARRAY') {
+		my $regions			= delete $args{RegionName};
+		my $count			= 1;
+		foreach my $region (@{$regions}) {
+			$args{"RegionName." . $count} = $region;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeRegions', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $regions;
+
+ 		foreach my $region_item (@{$xml->{regionInfo}{item}}) {
+ 			my $region = Net::Amazon::EC2::Region->new(
+ 				region_name			=> $region_item->{regionName},
+ 				region_endpoint		=> $region_item->{regionEndpoint},
+ 			);
+ 			
+ 			push @$regions, $region;
+ 		}
+ 		
+ 		return $regions;
+	}
+}
+
+=head2 describe_reserved_instances(%params)
+
+Describes Reserved Instances that you purchased.
+
+=over
+
+=item ReservedInstancesId (optional)
+
+The reserved instance id(s) to be described. Can be either a scalar or an array ref.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::ReservedInstance objects
+
+=cut
+
+sub describe_reserved_instances {
+	my $self = shift;
+	my %args = validate( @_, {
+		ReservedInstancesId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of reserved instances lets split them out into their ReservedInstancesId.n format
+	if (ref ($args{ReservedInstancesId}) eq 'ARRAY') {
+		my $reserved_instance_ids	= delete $args{ReservedInstancesId};
+		my $count					= 1;
+		foreach my $reserved_instance_id (@{$reserved_instance_ids}) {
+			$args{"ReservedInstancesId." . $count} = $reserved_instance_id;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeReservedInstances', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $reserved_instances;
+
+ 		foreach my $reserved_instance_item (@{$xml->{reservedInstancesSet}{item}}) {
+ 			my $reserved_instance = Net::Amazon::EC2::ReservedInstance->new(
+				reserved_instances_id	=> $reserved_instance_item->{reservedInstancesId},
+				instance_type			=> $reserved_instance_item->{instanceType},
+				availability_zone		=> $reserved_instance_item->{availabilityZone},
+				duration				=> $reserved_instance_item->{duration},
+				start					=> $reserved_instance_item->{start},
+				usage_price				=> $reserved_instance_item->{usagePrice},
+				fixed_price				=> $reserved_instance_item->{fixedPrice},
+				instance_count			=> $reserved_instance_item->{instanceCount},
+				product_description		=> $reserved_instance_item->{productDescription},
+				state					=> $reserved_instance_item->{state},
+ 			);
+ 			
+ 			push @$reserved_instances, $reserved_instance;
+ 		}
+ 		
+ 		return $reserved_instances;
+	}
+}
+
+=head2 describe_reserved_instances_offerings(%params)
+
+Describes Reserved Instance offerings that are available for purchase. With Amazon EC2 Reserved Instances, 
+you purchase the right to launch Amazon EC2 instances for a period of time (without getting insufficient 
+capacity errors) and pay a lower usage rate for the actual time used.
+
+=over
+
+=item ReservedInstancesOfferingId (optional)
+
+ID of the Reserved Instances to describe.
+
+=item InstanceType (optional)
+
+The instance type on which the Reserved Instance can be used.
+
+=item AvailabilityZone (optional)
+
+The Availability Zone in which the Reserved Instance can be used.
+
+=item ProductDescription (optional)
+
+The Reserved Instance description.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::ReservedInstanceOffering objects
+
+=cut
+
+sub describe_reserved_instances_offerings {
+	my $self = shift;
+	my %args = validate( @_, {
+		ReservedInstancesOfferingId	=> { type => SCALAR, optional => 1 },
+		InstanceType				=> { type => SCALAR, optional => 1 },
+		AvailabilityZone			=> { type => SCALAR, optional => 1 },
+		ProductDescription			=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DescribeReservedInstancesOfferings', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $reserved_instance_offerings;
+
+ 		foreach my $reserved_instance_offering_item (@{$xml->{reservedInstancesOfferingsSet}{item}}) {
+ 			my $reserved_instance_offering = Net::Amazon::EC2::ReservedInstanceOffering->new(
+				reserved_instances_offering_id	=> $reserved_instance_offering_item->{reservedInstancesOfferingId},
+				instance_type					=> $reserved_instance_offering_item->{instanceType},
+				availability_zone				=> $reserved_instance_offering_item->{availabilityZone},
+				duration						=> $reserved_instance_offering_item->{duration},
+				start							=> $reserved_instance_offering_item->{start},
+				usage_price						=> $reserved_instance_offering_item->{usagePrice},
+				fixed_price						=> $reserved_instance_offering_item->{fixedPrice},
+				instance_count					=> $reserved_instance_offering_item->{instanceCount},
+				product_description				=> $reserved_instance_offering_item->{productDescription},
+				state							=> $reserved_instance_offering_item->{state},
+ 			);
+ 			
+ 			push @$reserved_instance_offerings, $reserved_instance_offering;
+ 		}
+ 		
+ 		return $reserved_instance_offerings;
+	}
+}
+
 =head2 describe_security_groups(%params)
 
 This method describes the security groups available to this account. It takes the following parameter:
@@ -951,6 +1757,7 @@ sub describe_security_groups {
 				my $ip_protocol = $ip_perm->{ipProtocol};
 				my $from_port	= $ip_perm->{fromPort};
 				my $to_port		= $ip_perm->{toPort};
+				my $icmp_port	= $ip_perm->{icmpPort};
 				my $groups;
 				my $ip_ranges;
 				
@@ -982,6 +1789,7 @@ sub describe_security_groups {
 					group_description	=> $group_description,
 					from_port			=> $from_port,
 					to_port				=> $to_port,
+					icmp_port			=> $icmp_port,
 				);
 				
 				if ($ip_ranges) {
@@ -1006,6 +1814,239 @@ sub describe_security_groups {
 		}
 		
 		return $security_groups;	
+	}
+}
+
+=head2 describe_snapshots(%params)
+
+Describes the snapshots currently created. It takes the following arguments:
+
+=over
+
+=item SnapshotId (optional)
+
+Either a scalar or array ref of snapshot id's can be passed in. If this isn't passed in
+it will describe all the current snapshots.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::Snapshot objects.
+
+=cut
+
+sub describe_snapshots {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
+	if (ref ($args{SnapshotId}) eq 'ARRAY') {
+		my $snapshots		= delete $args{SnapshotId};
+		my $count			= 1;
+		foreach my $snapshot (@{$snapshots}) {
+			$args{"SnapshotId." . $count} = $snapshot;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $snapshots;
+
+ 		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
+ 			my $snapshot = Net::Amazon::EC2::Snapshot->new(
+ 				snapshot_id		=> $snap->{snapshotId},
+ 				status			=> $snap->{status},
+ 				volume_id		=> $snap->{volumeId},
+ 				start_time		=> $snap->{startTime},
+ 				progress		=> $snap->{progress},
+ 			);
+ 			
+ 			push @$snapshots, $snapshot;
+ 		}
+ 		
+ 		return $snapshots;
+	}
+}
+
+=head2 describe_volumes(%params)
+
+Describes the volumes currently created. It takes the following arguments:
+
+=over
+
+=item VolumeId (optional)
+
+Either a scalar or array ref of volume id's can be passed in. If this isn't passed in
+it will describe all the current volumes.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::Volume objects.
+
+=cut
+
+sub describe_volumes {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of volumes lets split them out into their Volume.n format
+	if (ref ($args{VolumeId}) eq 'ARRAY') {
+		my $volumes		= delete $args{VolumeId};
+		my $count			= 1;
+		foreach my $volume (@{$volumes}) {
+			$args{"VolumeId." . $count} = $volume;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $volumes;
+
+		foreach my $volume_set (@{$xml->{volumeSet}{item}}) {
+			my $attachments;
+			unless ( grep { defined && length } $volume_set->{snapshotId} and ref $volume_set->{snapshotId} ne 'HASH') {
+				$volume_set->{snapshotId} = undef;
+			}
+		
+			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
+ 				my $attachment = Net::Amazon::EC2::Attachment->new(
+ 					volume_id	=> $attachment_set->{volumeId},
+ 					status		=> $attachment_set->{status},
+ 					instance_id	=> $attachment_set->{instanceId},
+ 					attach_time	=> $attachment_set->{attachTime},
+ 					device		=> $attachment_set->{device},
+ 				);
+ 				
+ 				push @$attachments, $attachment;
+			}
+			
+			my $volume = Net::Amazon::EC2::Volume->new(
+				volume_id		=> $volume_set->{volumeId},
+				status			=> $volume_set->{status},
+				zone			=> $volume_set->{availabilityZone},
+				create_time		=> $volume_set->{createTime},
+				snapshot_id		=> $volume_set->{snapshotId},
+				size			=> $volume_set->{size},
+				attachments		=> $attachments,
+			);
+			
+			push @$volumes, $volume;
+		}
+		
+		return $volumes;
+	}
+}
+
+=head2 detach_volume(%params)
+
+Detach a volume from an instance.
+
+=over
+
+=item VolumeId (required)
+
+The volume id you wish to detach.
+
+=item InstanceId (optional)
+
+The instance id you wish to detach from.
+
+=item Device (optional)
+
+The device the volume was attached as.
+
+=item Force (optional)
+
+A boolean for if to forcibly detach the volume from the instance.
+WARNING: This can lead to data loss or a corrupted file system.
+	   Use this option only as a last resort to detach a volume
+	   from a failed instance.  The instance will not have an
+	   opportunity to flush file system caches nor file system
+	   meta data.
+
+=back
+
+Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
+
+=cut
+
+sub detach_volume {
+	my $self = shift;
+	my %args = validate( @_, {
+		VolumeId	=> { type => SCALAR },
+		InstanceId	=> { type => SCALAR, optional => 1 },
+		Device		=> { type => SCALAR, optional => 1 },
+		Force		=> { type => SCALAR, optional => 1 },
+	});
+
+	my $xml = $self->_sign(Action  => 'DetachVolume', %args);
+
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $attachment = Net::Amazon::EC2::Attachment->new(
+			volume_id	=> $xml->{volumeId},
+			status		=> $xml->{status},
+			instance_id	=> $xml->{instanceId},
+			attach_time	=> $xml->{attachTime},
+			device		=> $xml->{device},
+		);
+		
+		return $attachment;
+	}
+}
+
+=head2 disassociate_address(%params)
+
+Disassociates an elastic IP address with an instance. It takes the following arguments:
+
+=over
+
+=item PublicIp (required)
+
+The IP address to disassociate
+
+=back
+
+Returns true if the disassociation succeeded.
+
+=cut
+
+sub disassociate_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
 	}
 }
 
@@ -1045,6 +2086,44 @@ sub get_console_output {
 		);
 		
 		return $console_output;
+	}
+}
+
+=head2 get_password_data(%params)
+
+Retrieves the encrypted administrator password for the instances running Windows. This procedure is not applicable for Linux and UNIX instances.
+
+=over
+
+=item InstanceId (required)
+
+The Instance Id for which to retrieve the password.
+
+=back
+
+Returns a Net::Amazon::EC2::InstancePassword object
+
+=cut
+
+sub get_password_data {
+	my $self = shift;
+	my %args = validate( @_, {
+		instanceId	=> { type => SCALAR },
+	});
+
+	my $xml = $self->_sign(Action  => 'GetPasswordData', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $instance_password = Net::Amazon::EC2::InstancePassword->new(
+			instance_id		=> $xml->{instanceId},
+			timestamp		=> $xml->{timestamp},
+			password_data	=> $xml->{passwordData},
+		);
+ 			
+ 		return $instance_password;
 	}
 }
 
@@ -1103,6 +2182,126 @@ sub modify_image_attribute {
 	}
 	else {
 		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 monitor_instances(%params)
+
+Enables monitoring for a running instance. For more information, refer to the Amazon CloudWatch Developer Guide.
+
+=over
+
+=item InstanceId (required)
+
+The instance id(s) to monitor. Can be a scalar or an array ref
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::MonitoredInstance objects
+
+=cut
+
+sub monitor_instances {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+
+	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	if (ref ($args{InstanceId}) eq 'ARRAY') {
+		my $instance_ids	= delete $args{InstanceId};
+		my $count					= 1;
+		foreach my $instance_id (@{$instance_ids}) {
+			$args{"InstanceId." . $count} = $instance_id;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'MonitorInstances', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+ 		my $monitored_instances;
+
+ 		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
+ 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+				instance_id	=> $monitored_instance_item->{instanceId},
+				state		=> $monitored_instance_item->{monitoring}{state},
+ 			);
+ 			
+ 			push @$monitored_instances, $monitored_instance;
+ 		}
+ 		
+ 		return $monitored_instances;
+	}
+}
+
+=head2 purchase_reserved_instances_offering(%params)
+
+Purchases a Reserved Instance for use with your account. With Amazon EC2 Reserved Instances, you purchase the right to 
+launch Amazon EC2 instances for a period of time (without getting insufficient capacity errors) and pay a lower usage 
+rate for the actual time used.
+
+=over
+
+=item ReservedInstancesOfferingId (required)
+
+ID of the Reserved Instances to describe. Can be either a scalar or an array ref.
+
+=item InstanceCount (optional)
+
+The number of Reserved Instances to purchase (default is 1). Can be either a scalar or an array ref.
+
+NOTE NOTE NOTE, the array ref needs to line up with the InstanceCount if you want to pass that in, so that 
+the right number of instances are started of the right instance offering
+
+=back
+
+Returns 1 if the reservations succeeded.
+
+=cut
+
+sub purchase_reserved_instances_offering {
+	my $self = shift;
+	my %args = validate( @_, {
+		ReservedInstancesOfferingId	=> { type => ARRAYREF | SCALAR },
+		InstanceCount				=> { type => ARRAYREF | SCALAR, optional => 1 },
+	});
+	
+	# If we have a array ref of reserved instance offerings lets split them out into their ReservedInstancesOfferingId.n format
+	if (ref ($args{ReservedInstancesOfferingId}) eq 'ARRAY') {
+		my $reserved_instance_offering_ids = delete $args{ReservedInstancesOfferingId};
+		my $count = 1;
+		foreach my $reserved_instance_offering_id (@{$reserved_instance_offering_ids}) {
+			$args{"ReservedInstancesOfferingId." . $count} = $reserved_instance_offering_id;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of instance counts lets split them out into their InstanceCount.n format
+	if (ref ($args{InstanceCount}) eq 'ARRAY') {
+		my $instance_counts = delete $args{InstanceCount};
+		my $count = 1;
+		foreach my $instance_count (@{$instance_counts}) {
+			$args{"InstanceCount." . $count} = $instance_count;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'PurchaseReservedInstancesOffering', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{reservedInstancesId} ) {
 			return 1;
 		}
 		else {
@@ -1187,6 +2386,43 @@ sub register_image {
 	}
 	else {
 		return $xml->{imageId};
+	}
+}
+
+=head2 release_address(%params)
+
+Releases an allocated IP address. It takes the following arguments:
+
+=over
+
+=item PublicIp (required)
+
+The IP address to release
+
+=back
+
+Returns true if the releasing succeeded.
+
+=cut
+
+sub release_address {
+	my $self = shift;
+	my %args = validate( @_, {
+		PublicIp 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'ReleaseAddress', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
 	}
 }
 
@@ -1389,6 +2625,18 @@ This is the virtual name for a blocked device to be attached, may pass in a scal
 
 This is the device name for a block device to be attached, may pass in a scalar or arrayref
 
+=item Encoding (optional)
+
+The encoding.
+
+=item Version (optional)
+
+The version.
+
+=item Monitoring.Enabled (optional)
+
+Enables monitoring for this instance.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -1410,6 +2658,9 @@ sub run_instances {
 		RamdiskId							=> { type => SCALAR, optional => 1 },
 		'BlockDeviceMapping.VirtualName'	=> { type => SCALAR | ARRAYREF, optional => 1 },
 		'BlockDeviceMapping.DeviceName'		=> { type => SCALAR | ARRAYREF, optional => 1 },
+		Encoding							=> { type => SCALAR, optional => 1 },
+		Version								=> { type => SCALAR, optional => 1 },
+		'Monitoring.Enabled'				=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -1499,6 +2750,8 @@ sub run_instances {
 				placement			=> $placement_response,
 				private_dns_name	=> $instance_elem->{privateDnsName},
 				reason				=> $instance_elem->{reason},
+				platform			=> $instance_elem->{platform},
+				monitoring			=> $instance_elem->{monitoring}{state},
 			);
 
 			if ($product_codes) {
@@ -1552,7 +2805,6 @@ sub terminate_instances {
 	}
 	
 	my $xml = $self->_sign(Action  => 'TerminateInstances', %args);	
-
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
@@ -1561,694 +2813,70 @@ sub terminate_instances {
 		
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
 			my $terminated_instance = Net::Amazon::EC2::TerminateInstancesResponse->new(
-				instance_id	=> $inst->{instanceId},
+				instance_id		=> $inst->{instanceId},
+				shutdown_code	=> $inst->{shutdownState}{code},
+				shutdown_name	=> $inst->{shutdownState}{name},
+				previous_code	=> $inst->{previousState}{code},
+				previous_name	=> $inst->{previousState}{name},
 			);
 			
 			push @$terminated_instances, $terminated_instance;
 		}
-		
+	
 		return $terminated_instances;
 	}
 }
 
-=head2 allocate_address()
+=head2 unmonitor_instances(%params)
 
-Acquires an elastic IP address which can be associated with an instance to create a movable static IP. Takes no arguments
-
-Returns the IP address obtained.
-
-=cut
-
-sub allocate_address {
-	my $self = shift;
-
-	my $xml = $self->_sign(Action  => 'AllocateAddress');
-
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		return $xml->{publicIp};
-	}
-}
-
-=head2 associate_address(%params)
-
-Associates an elastic IP address with an instance. It takes the following arguments:
+Disables monitoring for a running instance. For more information, refer to the Amazon CloudWatch Developer Guide.
 
 =over
 
 =item InstanceId (required)
 
-The instance id you wish to associate the IP address with
-
-=item PublicIp (required)
-
-The IP address to associate with
+The instance id(s) to monitor. Can be a scalar or an array ref
 
 =back
 
-Returns true if the association succeeded.
+Returns an array ref of Net::Amazon::EC2::MonitoredInstance objects
 
 =cut
 
-sub associate_address {
+sub unmonitor_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId		=> { type => SCALAR },
-		PublicIp 		=> { type => SCALAR },
-	});
-	
-	my $xml = $self->_sign(Action  => 'AssociateAddress', %args);
-
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		if ($xml->{return} eq 'true') {
-			return 1;
-		}
-		else {
-			return undef;
-		}
-	}
-}
-
-=head2 describe_addresses(%params)
-
-This method describes the elastic addresses currently allocated and any instances associated with them. It takes the following arguments:
-
-=over
-
-=item PublicIp (optional)
-
-The IP address to describe. Can be either a scalar or an array ref.
-
-=back
-
-Returns an array ref of Net::Amazon::EC2::DescribeAddress objects
-
-=cut
-
-sub describe_addresses {
-	my $self = shift;
-	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR, optional => 1 },
+		InstanceId	=> { type => ARRAYREF | SCALAR, optional => 1 },
 	});
 
-	# If we have a array ref of ip addresses lets split them out into their PublicIp.n format
-	if (ref ($args{PublicIp}) eq 'ARRAY') {
-		my $ip_addresses	= delete $args{PublicIp};
-		my $count			= 1;
-		foreach my $ip_address (@{$ip_addresses}) {
-			$args{"PublicIp." . $count} = $ip_address;
+	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	if (ref ($args{InstanceId}) eq 'ARRAY') {
+		my $instance_ids	= delete $args{InstanceId};
+		my $count					= 1;
+		foreach my $instance_id (@{$instance_ids}) {
+			$args{"InstanceId." . $count} = $instance_id;
 			$count++;
 		}
 	}
 	
-	my $addresses;
-	my $xml = $self->_sign(Action  => 'DescribeAddresses', %args);
+	my $xml = $self->_sign(Action  => 'UnmonitorInstances', %args);
 	
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
 	}
 	else {
-		foreach my $addy (@{$xml->{addressesSet}{item}}) {
-			if (ref($addy->{instanceId}) eq 'HASH') {
-				undef $addy->{instanceId};
-			}
-			
-			my $address = Net::Amazon::EC2::DescribeAddress->new(
-				public_ip	=> $addy->{publicIp},
-				instance_id	=> $addy->{instanceId},
-			);
-			
-			push @$addresses, $address;
-		}
-		
-		return $addresses;
-	}
-}
-
-=head2 describe_availability_zones(%params)
-
-This method describes the availability zones currently available to choose from. It takes the following arguments:
-
-=over
-
-=item ZoneName (optional)
-
-The zone name to describe. Can be either a scalar or an array ref.
-
-=back
-
-Returns an array ref of Net::Amazon::EC2::AvailabilityZone objects
-
-=cut
-
-sub describe_availability_zones {
-	my $self = shift;
-	my %args = validate( @_, {
-		ZoneName	=> { type => SCALAR, optional => 1 },
-	});
-
-	# If we have a array ref of zone names lets split them out into their ZoneName.n format
-	if (ref ($args{ZoneName}) eq 'ARRAY') {
-		my $zone_names		= delete $args{ZoneName};
-		my $count			= 1;
-		foreach my $zone_name (@{$zone_names}) {
-			$args{"ZoneName." . $count} = $zone_name;
-			$count++;
-		}
-	}
-	
-	my $xml = $self->_sign(Action  => 'DescribeAvailabilityZones', %args);
-
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		my $availability_zones;
-		foreach my $az (@{$xml->{availabilityZoneInfo}{item}}) {
-			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
-				zone_name	=> $az->{zoneName},
-				zone_state	=> $az->{zoneState},
-			);
-			
-			push @$availability_zones, $availability_zone;
-		}
-		
-		return $availability_zones;
-	}
-}
-
-=head2 disassociate_address(%params)
-
-Disassociates an elastic IP address with an instance. It takes the following arguments:
-
-=over
-
-=item PublicIp (required)
-
-The IP address to disassociate
-
-=back
-
-Returns true if the disassociation succeeded.
-
-=cut
-
-sub disassociate_address {
-	my $self = shift;
-	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR },
-	});
-	
-	my $xml = $self->_sign(Action  => 'DisassociateAddress', %args);
-
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		if ($xml->{return} eq 'true') {
-			return 1;
-		}
-		else {
-			return undef;
-		}
-	}
-}
-
-=head2 release_address(%params)
-
-Releases an allocated IP address. It takes the following arguments:
-
-=over
-
-=item PublicIp (required)
-
-The IP address to release
-
-=back
-
-Returns true if the releasing succeeded.
-
-=cut
-
-sub release_address {
-	my $self = shift;
-	my %args = validate( @_, {
-		PublicIp 		=> { type => SCALAR },
-	});
-	
-	my $xml = $self->_sign(Action  => 'ReleaseAddress', %args);
-
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		if ($xml->{return} eq 'true') {
-			return 1;
-		}
-		else {
-			return undef;
-		}
-	}
-}
-
-=head2 describe_volumes(%params)
-
-Describes the volumes currently created. It takes the following arguments:
-
-=over
-
-=item VolumeId (optional)
-
-Either a scalar or array ref of volume id's can be passed in. If this isn't passed in
-it will describe all the current volumes.
-
-=back
-
-Returns an array ref of Net::Amazon::EC2::Volume objects.
-
-=cut
-
-sub describe_volumes {
-	my $self = shift;
-	my %args = validate( @_, {
-		VolumeId	=> { type => ARRAYREF | SCALAR, optional => 1 },
-	});
-
-	# If we have a array ref of volumes lets split them out into their Volume.n format
-	if (ref ($args{VolumeId}) eq 'ARRAY') {
-		my $volumes		= delete $args{VolumeId};
-		my $count			= 1;
-		foreach my $volume (@{$volumes}) {
-			$args{"VolumeId." . $count} = $volume;
-			$count++;
-		}
-	}
-	
-	my $xml = $self->_sign(Action  => 'DescribeVolumes', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		my $volumes;
-
-		foreach my $volume_set (@{$xml->{volumeSet}{item}}) {
-			my $attachments;
-			unless ( grep { defined && length } $volume_set->{snapshotId} and ref $volume_set->{snapshotId} ne 'HASH') {
-				$volume_set->{snapshotId} = undef;
-			}
-		
-			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
- 				my $attachment = Net::Amazon::EC2::Attachment->new(
- 					volume_id	=> $attachment_set->{volumeId},
- 					status		=> $attachment_set->{status},
- 					instance_id	=> $attachment_set->{instanceId},
- 					attach_time	=> $attachment_set->{attachTime},
- 					device		=> $attachment_set->{device},
- 				);
- 				
- 				push @$attachments, $attachment;
-			}
-			
-			my $volume = Net::Amazon::EC2::Volume->new(
-				volume_id		=> $volume_set->{volumeId},
-				status			=> $volume_set->{status},
-				zone			=> $volume_set->{availabilityZone},
-				create_time		=> $volume_set->{createTime},
-				snapshot_id		=> $volume_set->{snapshotId},
-				size			=> $volume_set->{size},
-				attachments		=> $attachments,
-			);
-			
-			push @$volumes, $volume;
-		}
-		
-		return $volumes;
-	}
-}
-
-=head2 create_volume(%params)
-
-Creates a volume.
-
-=over
-
-=item Size (required)
-
-The size in GiB of the volume you want to create.
-
-=item SnapshotId (optional)
-
-The optional snapshot id to create the volume from.
-
-=item AvailabilityZone (required)
-
-The availability zone to create the volume in.
-
-=back
-
-Returns true if the releasing succeeded.
-
-=cut
-
-sub create_volume {
-	my $self = shift;
-	my %args = validate( @_, {
-		Size				=> { type => SCALAR },
-		SnapshotId			=> { type => SCALAR, optional => 1 },
-		AvailabilityZone	=> { type => SCALAR },
-	});
-
-	my $xml = $self->_sign(Action  => 'CreateVolume', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-
-		unless ( grep { defined && length } $xml->{snapshotId} and ref $xml->{snapshotId} ne 'HASH') {
-			$xml->{snapshotId} = undef;
-		}
-
-		my $volume = Net::Amazon::EC2::Volume->new(
-			volume_id		=> $xml->{volumeId},
-			status			=> $xml->{status},
-			zone			=> $xml->{availabilityZone},
-			create_time		=> $xml->{createTime},
-			snapshot_id		=> $xml->{snapshotId},
-			size			=> $xml->{size},
-		);
-
-		return $volume;
-	}
-}
-
-
-=head2 delete_volume(%params)
-
-Delete a volume.
-
-=over
-
-=item VolumeId (required)
-
-The volume id you wish to delete.
-
-=back
-
-Returns true if the deleting succeeded.
-
-=cut
-
-sub delete_volume {
-	my $self = shift;
-	my %args = validate( @_, {
-		VolumeId	=> { type => SCALAR, optional => 1 },
-	});
-
-	my $xml = $self->_sign(Action  => 'DeleteVolume', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		if ($xml->{return} eq 'true') {
-			return 1;
-		}
-		else {
-			return undef;
-		}
-	}
-}
-
-=head2 attach_volume(%params)
-
-Attach a volume to an instance.
-
-=over
-
-=item VolumeId (required)
-
-The volume id you wish to attach.
-
-=item InstanceId (required)
-
-The instance id you wish to attach the volume to.
-
-=item Device (required)
-
-The device id you want the volume attached as.
-
-=back
-
-Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
-
-=cut
-
-sub attach_volume {
-	my $self = shift;
-	my %args = validate( @_, {
-		VolumeId	=> { type => SCALAR },
-		InstanceId	=> { type => SCALAR },
-		Device		=> { type => SCALAR },
-	});
-
-	my $xml = $self->_sign(Action  => 'AttachVolume', %args);
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		my $attachment = Net::Amazon::EC2::Attachment->new(
-			volume_id	=> $xml->{volumeId},
-			status		=> $xml->{status},
-			instance_id	=> $xml->{instanceId},
-			attach_time	=> $xml->{attachTime},
-			device		=> $xml->{device},
-		);
-		
-		return $attachment;
-	}
-}
-
-=head2 detach_volume(%params)
-
-Detach a volume from an instance.
-
-=over
-
-=item VolumeId (required)
-
-The volume id you wish to detach.
-
-=item InstanceId (optional)
-
-The instance id you wish to detach from.
-
-=item Device (optional)
-
-The device the volume was attached as.
-
-=item Force (optional)
-
-A boolean for if to forcibly detach the volume from the instance.
-WARNING: This can lead to data loss or a corrupted file system.
-	   Use this option only as a last resort to detach a volume
-	   from a failed instance.  The instance will not have an
-	   opportunity to flush file system caches nor file system
-	   meta data.
-
-=back
-
-Returns a Net::Amazon::EC2::Attachment object containing the resulting volume status.
-
-=cut
-
-sub detach_volume {
-	my $self = shift;
-	my %args = validate( @_, {
-		VolumeId	=> { type => SCALAR },
-		InstanceId	=> { type => SCALAR, optional => 1 },
-		Device		=> { type => SCALAR, optional => 1 },
-		Force		=> { type => SCALAR, optional => 1 },
-	});
-
-	my $xml = $self->_sign(Action  => 'DetachVolume', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		my $attachment = Net::Amazon::EC2::Attachment->new(
-			volume_id	=> $xml->{volumeId},
-			status		=> $xml->{status},
-			instance_id	=> $xml->{instanceId},
-			attach_time	=> $xml->{attachTime},
-			device		=> $xml->{device},
-		);
-		
-		return $attachment;
-	}
-}
-
-=head2 describe_snapshots(%params)
-
-Describes the snapshots currently created. It takes the following arguments:
-
-=over
-
-=item SnapshotId (optional)
-
-Either a scalar or array ref of snapshot id's can be passed in. If this isn't passed in
-it will describe all the current snapshots.
-
-=back
-
-Returns an array ref of Net::Amazon::EC2::Snapshot objects.
-
-=cut
-
-sub describe_snapshots {
-	my $self = shift;
-	my %args = validate( @_, {
-		SnapshotId	=> { type => ARRAYREF | SCALAR, optional => 1 },
-	});
-
-	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
-	if (ref ($args{SnapshotId}) eq 'ARRAY') {
-		my $snapshots		= delete $args{SnapshotId};
-		my $count			= 1;
-		foreach my $snapshot (@{$snapshots}) {
-			$args{"SnapshotId." . $count} = $snapshot;
-			$count++;
-		}
-	}
-	
-	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
- 		my $snapshots;
-
- 		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
- 			my $snapshot = Net::Amazon::EC2::Snapshot->new(
- 				snapshot_id		=> $snap->{snapshotId},
- 				status			=> $snap->{status},
- 				volume_id		=> $snap->{volumeId},
- 				start_time		=> $snap->{startTime},
- 				progress		=> $snap->{progress},
+ 		my $monitored_instances;
+
+ 		foreach my $monitored_instance_item (@{$xml->{instancesSet}{item}}) {
+ 			my $monitored_instance = Net::Amazon::EC2::ReservedInstance->new(
+				instance_id	=> $monitored_instance_item->{instanceId},
+				state		=> $monitored_instance_item->{monitoring}{state},
  			);
  			
- 			push @$snapshots, $snapshot;
+ 			push @$monitored_instances, $monitored_instance;
  		}
  		
- 		return $snapshots;
-	}
-}
-
-=head2 create_snapshot(%params)
-
-Create a snapshot of a volume. It takes the following arguments:
-
-=over
-
-=item VolumeId (required)
-
-The volume id of the volume you want to take a snapshot of.
-
-=back
-
-Returns a Net::Amazon::EC2::Snapshot object of the newly created snapshot.
-
-=cut
-
-sub create_snapshot {
-	my $self = shift;
-	my %args = validate( @_, {
-		VolumeId	=> { type => SCALAR },
-	});
-	
-	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		unless ( grep { defined && length } $xml->{progress} and ref $xml->{progress} ne 'HASH') {
-			$xml->{progress} = undef;
-		}
-
-		my $snapshot = Net::Amazon::EC2::Snapshot->new(
-			snapshot_id		=> $xml->{snapshotId},
-			status			=> $xml->{status},
-			volume_id		=> $xml->{volumeId},
-			start_time		=> $xml->{startTime},
-			progress		=> $xml->{progress},
-		);
-
-  		return $snapshot;
-	}
-}
-
-=head2 delete_snapshot(%params)
-
-Deletes the snapshots passed in. It takes the following arguments:
-
-=over
-
-=item SnapshotId (required)
-
-Either a scalar or array ref of snapshot id's can be passed in. Will delete the corresponding
-snapshots.
-
-=back
-
-Returns true if the deleting succeeded.
-
-=cut
-
-sub delete_snapshot {
-	my $self = shift;
-	my %args = validate( @_, {
-		SnapshotId	=> { type => ARRAYREF | SCALAR },
-	});
-
-	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
-	if (ref ($args{SnapshotId}) eq 'ARRAY') {
-		my $snapshots		= delete $args{SnapshotId};
-		my $count			= 1;
-		foreach my $snapshot (@{$snapshots}) {
-			$args{"SnapshotId." . $count} = $snapshot;
-			$count++;
-		}
-	}
-	
-	my $xml = $self->_sign(Action  => 'DeleteSnapshot', %args);
-
-	
-	if ( grep { defined && length } $xml->{Errors} ) {
-		return $self->_parse_errors($xml);
-	}
-	else {
-		if ($xml->{return} eq 'true') {
-			return 1;
-		}
-		else {
-			return undef;
-		}
+ 		return $monitored_instances;
 	}
 }
 
@@ -2259,7 +2887,12 @@ __END__
 
 =head1 TESTING
 
-Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of machine instance usage charges (since there are 2 instances started) which as of August 21st, 2008 costs a total of $0.20 USD
+Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  
+Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of 
+machine instance usage charges (since there are 2 instances started) which as of September 23rd, 2009 costs a total of $0.20 USD
+
+Important note about the windows-only methods.  These have not been well tested as I do not run windows-based instances, so exercise
+caution in using these.
 
 =head1 AUTHOR
 
@@ -2267,9 +2900,9 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2008 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/2008-05-05/DeveloperGuide/>
+Amazon EC2 API: L<http://docs.amazonwebservices.com/AWSEC2/latest/APIReference/>

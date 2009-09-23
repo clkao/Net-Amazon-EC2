@@ -33,6 +33,12 @@ BEGIN {
 		Net::Amazon::EC2::Volume
 		Net::Amazon::EC2::Attachment
 		Net::Amazon::EC2::Snapshot
+		Net::Amazon::EC2::BundleInstanceResponse
+		Net::Amazon::EC2::Region
+		Net::Amazon::EC2::ReservedInstance
+		Net::Amazon::EC2::ReservedInstanceOffering
+		Net::Amazon::EC2::MonitoredInstance
+		Net::Amazon::EC2::InstancePassword
 	);
 
 	plan tests => scalar @modules;

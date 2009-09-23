@@ -1,13 +1,13 @@
-package Net::Amazon::EC2::ConsoleOutput;
+package Net::Amazon::EC2::InstancePassword;
 use Moose;
 
 =head1 NAME
 
-Net::Amazon::EC2::ConsoleOutput
+Net::Amazon::EC2::InstancePassword
 
 =head1 DESCRIPTION
 
-A class containing the output from an instance's console
+A class representing a instance password for a Windows-based instance.
 
 =head1 ATTRIBUTES
 
@@ -15,23 +15,23 @@ A class containing the output from an instance's console
 
 =item instance_id (required)
 
-The instance id of the output returned.
+The ID of the instance.
 
 =item timestamp (required)
 
-The timestamp of when the console output was last updated. 
+The time the data was last updated.
 
-=item output (required)
+=item password_data (required)
 
-The console output itself. 
+The password of the instance.
 
 =back
 
 =cut
 
 has 'instance_id'   => ( is => 'ro', isa => 'Str', required => 1 );
-has 'timestamp'     => ( is => 'ro', isa => 'Str', required => 1 );
-has 'output'        => ( is => 'ro', isa => 'Str', required => 1 );
+has 'timestamp'		=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'password_data'	=> ( is => 'ro', isa => 'Str', required => 1 );
 
 __PACKAGE__->meta->make_immutable();
 

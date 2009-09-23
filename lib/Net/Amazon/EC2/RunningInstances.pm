@@ -68,6 +68,14 @@ An array ref of Net::Amazon::EC2::ProductCode objects.
 
 The reason for the most recent state transition.
 
+=item platform (optional)
+
+The operating system for this instance.
+
+=item monitoring (optional)
+
+The state of monitoring on this instance.
+
 =cut
 
 has 'ami_launch_index'  => ( is => 'ro', isa => 'Str', required => 0 );
@@ -85,12 +93,14 @@ has 'launch_time'       => ( is => 'ro', isa => 'Str', required => 1 );
 has 'placement'			=> ( is => 'ro', isa => 'Net::Amazon::EC2::PlacementResponse', required => 1 );
 has 'private_dns_name'  => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'product_codes'     => ( 
-    is          => 'ro', 
+    is          => 'rw', 
     isa         => 'ArrayRef[Net::Amazon::EC2::ProductCode]',
     auto_deref  => 1,
     required	=> 0,
 );
 has 'reason'            => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'platform'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'monitoring'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
@@ -100,7 +110,7 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2008 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

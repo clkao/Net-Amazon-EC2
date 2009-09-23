@@ -37,6 +37,11 @@ An array ref of Net::Amazon::EC2::IpRange objects to be associated with this rul
 
 An array ref of Net::Amazon::EC2::UserIdGroupPair objects to be associated with this rule.
 
+=item icmp_port (optional)
+
+For the ICMP protocol, the ICMP type and code must be specified. This must be specified in the format type:code where both are integers. Type, code, 
+or both can be specified as -1, which is a wildcard.
+
 =back
 
 =cut
@@ -56,6 +61,7 @@ has 'groups'        => (
     predicate   => 'has_groups',
     required    => 0,
 );
+has 'icmp_port'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
@@ -65,7 +71,7 @@ Jeff Kim <jkim@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2008 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut
