@@ -29,9 +29,21 @@ The ID of the volume the snapshot was taken from.
 
 The time the snapshot was started.
 
-=item progress (required)
+=item progress (optional)
 
-The current progress of the snaptop, in percent.
+The current progress of the snapshop, in percent.
+
+=item owner_id (required)
+
+AWS Access Key ID of the user who owns the snapshot.
+
+=item volume_size (optional)
+
+The size of the volume, in GiB.
+
+=item description (optional)
+
+Description of the snapshot.
 
 =back
 
@@ -42,6 +54,9 @@ has 'status'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'volume_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'start_time'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'progress'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'owner_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'volume_size'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'description'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 

@@ -25,6 +25,10 @@ State of the Availability Zone.
 
 Name of the region.
 
+=item messages (optional)
+
+An array ref of Net::Amazon::EC2::AvailabilityZoneMessage objects representing messages for this zone (if any)
+
 =back
 
 =cut
@@ -32,6 +36,7 @@ Name of the region.
 has 'zone_name'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'zone_state'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'region_name'	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'messages'		=> ( is => 'ro', isa => 'Maybe[Net::Amazon::EC2::AvailabilityZone]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 

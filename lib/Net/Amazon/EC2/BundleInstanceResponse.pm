@@ -57,6 +57,14 @@ An Amazon S3 upload policy that gives Amazon EC2 permission to upload items into
 
 The signature of the Base64 encoded JSON document.
 
+=item bundle_error_code (optional)
+
+Error code for bundle failure.
+
+=item bundle_error_message (optional)
+
+Error message associated with bundle failure.
+
 =back
 
 =cut
@@ -72,6 +80,8 @@ has 's3_prefix'						=> ( is => 'ro', isa => 'Str', required => 1 );
 has 's3_aws_access_key_id'			=> ( is => 'ro', isa => 'Str', required => 1 );
 has 's3_upload_policy'				=> ( is => 'ro', isa => 'Str', required => 1 );
 has 's3_policy_upload_signature'	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'bundle_error_code'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'bundle_error_message'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 

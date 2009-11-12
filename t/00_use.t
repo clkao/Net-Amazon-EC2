@@ -39,6 +39,9 @@ BEGIN {
 		Net::Amazon::EC2::ReservedInstanceOffering
 		Net::Amazon::EC2::MonitoredInstance
 		Net::Amazon::EC2::InstancePassword
+		Net::Amazon::EC2::SnapshotAttribute
+		Net::Amazon::EC2::CreateVolumePermission
+		Net::Amazon::EC2::AvailabilityZoneMessage
 	);
 
 	plan tests => scalar @modules;

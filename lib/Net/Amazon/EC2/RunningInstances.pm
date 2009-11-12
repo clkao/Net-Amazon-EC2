@@ -29,6 +29,14 @@ running state.
 
 The image id of the AMI currently running in this instance.
 
+=item kernel_id (required)
+
+The kernel id of the AKI currently running in this instance.
+
+=item ramdisk_id (required)
+
+The ramdisk id of the ARI loaded in this instance.
+
 =item instance_id (required)
 
 The instance id of the launched instance.
@@ -76,31 +84,54 @@ The operating system for this instance.
 
 The state of monitoring on this instance.
 
+=item subnet_id (optional)
+
+Specifies the subnet ID in which the instance is running (Amazon Virtual Private Cloud).
+
+=item vpc_id (optional)
+
+Specifies the VPC in which the instance is running (Amazon Virtual Private Cloud).
+
+=item private_ip_address (optional)
+
+Specifies the private IP address that is assigned to the instance (Amazon VPC).
+
+=item ip_address (optional)
+
+Specifies the IP address of the instance.
+
 =cut
 
-has 'ami_launch_index'  => ( is => 'ro', isa => 'Str', required => 0 );
-has 'dns_name'          => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'image_id'          => ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_id'       => ( is => 'ro', isa => 'Str', required => 1 );
-has 'instance_state'    => ( 
+has 'ami_launch_index'  	=> ( is => 'ro', isa => 'Str', required => 0 );
+has 'dns_name'          	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'image_id'          	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'kernel_id'         	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
+has 'ramdisk_id'        	=> ( is => 'ro', isa => 'Maybe[Str]', required => 1 );
+has 'instance_id'       	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'instance_state'    	=> ( 
     is => 'ro', 
     isa => 'Net::Amazon::EC2::InstanceState', 
     required => 1
 );
-has 'instance_type'     => ( is => 'ro', isa => 'Str', required => 1 );
-has 'key_name'          => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'launch_time'       => ( is => 'ro', isa => 'Str', required => 1 );
-has 'placement'			=> ( is => 'ro', isa => 'Net::Amazon::EC2::PlacementResponse', required => 1 );
-has 'private_dns_name'  => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'product_codes'     => ( 
+has 'instance_type'     	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'key_name'          	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'launch_time'       	=> ( is => 'ro', isa => 'Str', required => 1 );
+has 'placement'				=> ( is => 'ro', isa => 'Net::Amazon::EC2::PlacementResponse', required => 1 );
+has 'private_dns_name'  	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'product_codes'     	=> ( 
     is          => 'rw', 
     isa         => 'ArrayRef[Net::Amazon::EC2::ProductCode]',
     auto_deref  => 1,
     required	=> 0,
 );
-has 'reason'            => ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'platform'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-has 'monitoring'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'reason'            	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'platform'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'monitoring'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'subnet_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'vpc_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'private_ip_address'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'ip_address'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+
 
 __PACKAGE__->meta->make_immutable();
 

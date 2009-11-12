@@ -47,9 +47,11 @@ use Net::Amazon::EC2::ReservedInstance;
 use Net::Amazon::EC2::ReservedInstanceOffering;
 use Net::Amazon::EC2::MonitoredInstance;
 use Net::Amazon::EC2::InstancePassword;
-use Data::Dumper qw(Dumper);
+use Net::Amazon::EC2::SnapshotAttribute;
+use Net::Amazon::EC2::CreateVolumePermission;
+use Net::Amazon::EC2::AvailabilityZoneMessage;
 
-$VERSION = '0.10';
+$VERSION = '0.11';
 
 =head1 NAME
 
@@ -59,9 +61,9 @@ environment.
 =head1 VERSION
 
 
-This document describes version 0.10 of Net::Amazon::EC2, released
-September 23rd, 2009. This module is coded against the Query API version of the '2009-07-15' 
-version of the EC2 API last updated September 3, 2009.
+This document describes version 0.11 of Net::Amazon::EC2, released
+November 12th, 2009. This module is coded against the Query API version of the '2009-08-15' 
+version of the EC2 API last updated November 10th, 2009.
 
 =head1 SYNOPSIS
 
@@ -125,7 +127,7 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-07-15' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-08-15' );
 has 'base_url'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'http://ec2.amazonaws.com' );
 has 'timestamp'			=> ( is => 'ro', isa => 'Str', required => 1, default => sub { my $ts = time2isoz(); chop($ts); $ts .= '.000Z'; $ts =~ s/\s+/T/g; return $ts; } );
 
@@ -160,12 +162,10 @@ sub _sign {
 		%args
 	);
 	
-	$uri->query_form(\%params);
-	
 	my $ur	= $uri->as_string();
 	$self->_debug("GENERATED QUERY URL: $ur");
 	my $ua	= LWP::UserAgent->new();
-	my $res	= $ua->post($ur);
+	my $res	= $ua->post($ur, \%params);
 	# We should force <item> elements to be in an array
 	my $xs	= XML::Simple->new(ForceArray => qr/(?:item|Errors)/i);
 	my $xml;
@@ -511,6 +511,8 @@ sub bundle_instance {
 			s3_aws_access_key_id		=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
 			s3_upload_policy			=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
 			s3_policy_upload_signature	=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			bundle_error_code			=> $xml->{bundleInstanceTask}{error}{code},
+			bundle_error_message		=> $xml->{bundleInstanceTask}{error}{message},
 		);
 		
 		return $bundle;
@@ -557,6 +559,8 @@ sub cancel_bundle_task {
 			s3_aws_access_key_id		=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
 			s3_upload_policy			=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
 			s3_policy_upload_signature	=> $xml->{bundleInstanceTask}{storage}{S3}{bucket},
+			bundle_error_code			=> $xml->{bundleInstanceTask}{error}{code},
+			bundle_error_message		=> $xml->{bundleInstanceTask}{error}{message},
 		);
 		
 		return $bundle;
@@ -696,6 +700,10 @@ Create a snapshot of a volume. It takes the following arguments:
 
 The volume id of the volume you want to take a snapshot of.
 
+=item Description (optional)
+
+Description of the Amazon EBS snapshot.
+
 =back
 
 Returns a Net::Amazon::EC2::Snapshot object of the newly created snapshot.
@@ -706,6 +714,7 @@ sub create_snapshot {
 	my $self = shift;
 	my %args = validate( @_, {
 		VolumeId	=> { type => SCALAR },
+		Description	=> { type => SCALAR, optional => 1 },
 	});
 	
 	my $xml = $self->_sign(Action  => 'CreateSnapshot', %args);
@@ -725,6 +734,9 @@ sub create_snapshot {
 			volume_id		=> $xml->{volumeId},
 			start_time		=> $xml->{startTime},
 			progress		=> $xml->{progress},
+			owner_id		=> $xml->{ownerId},
+			volume_size		=> $xml->{volumeSize},
+			description		=> $xml->{description},
 		);
 
   		return $snapshot;
@@ -1084,10 +1096,21 @@ sub describe_availability_zones {
 	else {
 		my $availability_zones;
 		foreach my $az (@{$xml->{availabilityZoneInfo}{item}}) {
+			my $availability_zone_messages;
+			# Create the messages for this zone
+			foreach my $azm (@{$az->{messageSet}{item}}) {
+				my $availability_zone_message = Net::Amazon::EC2::AvailabilityZoneMessage->new(
+					message => $azm->{message},
+				);
+				
+				push @$availability_zone_messages, $availability_zone_message;
+			}
+			
 			my $availability_zone = Net::Amazon::EC2::AvailabilityZone->new(
 				zone_name	=> $az->{zoneName},
 				zone_state	=> $az->{zoneState},
 				region_name	=> $az->{regionName},
+				messages	=> $availability_zone_messages,
 			);
 			
 			push @$availability_zones, $availability_zone;
@@ -1140,6 +1163,8 @@ sub describe_bundle_tasks {
 				s3_aws_access_key_id		=> $item->{storage}{S3}{bucket},
 				s3_upload_policy			=> $item->{storage}{S3}{bucket},
 				s3_policy_upload_signature	=> $item->{storage}{S3}{bucket},
+				bundle_error_code			=> $item->{error}{code},
+				bundle_error_message		=> $item->{error}{message},
 			);
 			
 			push @$bundle_tasks, $bundle;
@@ -1439,6 +1464,8 @@ sub describe_instances {
 					ami_launch_index	=> $instance_elem->{amiLaunchIndex},
 					dns_name			=> $instance_elem->{dnsName},
 					image_id			=> $instance_elem->{imageId},
+					kernel_id			=> $instance_elem->{kernelId},
+					ramdisk_id			=> $instance_elem->{ramdiskId},
 					instance_id			=> $instance_elem->{instanceId},
 					instance_state		=> $instance_state_type,
 					instance_type		=> $instance_elem->{instanceType},
@@ -1449,6 +1476,10 @@ sub describe_instances {
 					reason				=> $instance_elem->{reason},
 					platform			=> $instance_elem->{platform},
 					monitoring			=> $instance_elem->{monitoring}{state},
+					subnet_id			=> $instance_elem->{subnetId},
+					vpc_id				=> $instance_elem->{vpcId},
+					private_ip_address	=> $instance_elem->{privateIpAddress},
+					ip_address			=> $instance_elem->{ipAddress},
 				);
 
 				if ($product_codes) {
@@ -1817,9 +1848,78 @@ sub describe_security_groups {
 	}
 }
 
+=head2 describe_snapshot_attribute(%params)
+
+Describes the snapshots attributes related to the snapshot in question. It takes the following arguments:
+
+=over
+
+=item SnapshotId (optional)
+
+Either a scalar or array ref of snapshot id's can be passed in. If this isn't passed in
+it will describe the attributes of all the current snapshots.
+
+=item Attribute (required)
+
+The attribute to describe, currently, the only valid attribute is createVolumePermission.
+
+=back
+
+Returns a Net::Amazon::EC2::SnapshotAttribute object.
+
+=cut
+
+sub describe_snapshot_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId		=> { type => ARRAYREF | SCALAR, optional => 1 },
+		Attribute		=> { type => SCALAR },
+	});
+
+	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
+	if (ref ($args{SnapshotId}) eq 'ARRAY') {
+		my $snapshots		= delete $args{SnapshotId};
+		my $count			= 1;
+		foreach my $snapshot (@{$snapshots}) {
+			$args{"SnapshotId." . $count} = $snapshot;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'DescribeSnapshotAttribute', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $perms;
+		
+		unless ( grep { defined && length } $xml->{createVolumePermission} and ref $xml->{createVolumePermission} ne 'HASH') {
+			$perms = undef;
+		}
+
+ 		foreach my $perm_item (@{$xml->{createVolumePermission}{item}}) {
+ 			my $perm = Net::Amazon::EC2::CreateVolumePermission->new(
+ 				user_id			=> $perm_item->{userId},
+ 				group			=> $perm_item->{group},
+ 			);
+ 			
+ 			push @$perms, $perm;
+ 		}
+
+		my $snapshot_attribute = Net::Amazon::EC2::SnapshotAttribute->new(
+			snapshot_id		=> $xml->{snapshotId},
+			permissions		=> $perms,
+		);
+ 		
+ 		return $snapshot_attribute;
+	}
+}
+
+
 =head2 describe_snapshots(%params)
 
-Describes the snapshots currently created. It takes the following arguments:
+Describes the snapshots available to the user. It takes the following arguments:
 
 =over
 
@@ -1827,6 +1927,14 @@ Describes the snapshots currently created. It takes the following arguments:
 
 Either a scalar or array ref of snapshot id's can be passed in. If this isn't passed in
 it will describe all the current snapshots.
+
+=item Owner (optional)
+
+The owner of the snapshot.
+
+=item RestorableBy (optional)
+
+A user who can create volumes from the snapshot.
 
 =back
 
@@ -1837,7 +1945,9 @@ Returns an array ref of Net::Amazon::EC2::Snapshot objects.
 sub describe_snapshots {
 	my $self = shift;
 	my %args = validate( @_, {
-		SnapshotId	=> { type => ARRAYREF | SCALAR, optional => 1 },
+		SnapshotId		=> { type => ARRAYREF | SCALAR, optional => 1 },
+		Owner			=> { type => SCALAR, optional => 1 },
+		RestorableBy	=> { type => SCALAR, optional => 1 },
 	});
 
 	# If we have a array ref of volumes lets split them out into their SnapshotId.n format
@@ -1851,7 +1961,6 @@ sub describe_snapshots {
 	}
 	
 	my $xml = $self->_sign(Action  => 'DescribeSnapshots', %args);
-
 	
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -1860,12 +1969,19 @@ sub describe_snapshots {
  		my $snapshots;
 
  		foreach my $snap (@{$xml->{snapshotSet}{item}}) {
+			unless ( grep { defined && length } $snap->{description} and ref $snap->{description} ne 'HASH') {
+				$snap->{description} = undef;
+			}
+
  			my $snapshot = Net::Amazon::EC2::Snapshot->new(
  				snapshot_id		=> $snap->{snapshotId},
  				status			=> $snap->{status},
  				volume_id		=> $snap->{volumeId},
  				start_time		=> $snap->{startTime},
  				progress		=> $snap->{progress},
+ 				owner_id		=> $snap->{ownerId},
+ 				volume_size		=> $snap->{volumeSize},
+ 				description		=> $snap->{description},
  			);
  			
  			push @$snapshots, $snapshot;
@@ -2190,6 +2306,65 @@ sub modify_image_attribute {
 	}
 }
 
+=head2 modify_snapshot_attribute(%params)
+
+This method modifies attributes of a snapshot.
+
+=over
+
+=item SnapshotId (required)
+
+The snapshot id to modify the attributes of.
+
+=item UserId (optional)
+
+User Id you wish to add/remove create volume permissions for.
+
+=item UserGroup (optional)
+
+User Id you wish to add/remove create volume permissions for. To make the snapshot createable by all
+set the UserGroup to "all".
+
+=item Attribute (required)
+
+The attribute you wish to modify, right now the only attribute you can modify is "CreateVolumePermission" 
+
+=item OperationType (required)
+
+The operation you wish to perform on the attribute. Right now just 'add' and 'remove' are supported.
+
+=back
+
+Returns 1 if the modification succeeds.
+
+=cut
+
+sub modify_snapshot_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId		=> { type => SCALAR },
+		UserId			=> { type => SCALAR, optional => 1 },
+		UserGroup		=> { type => SCALAR, optional => 1 },
+		Attribute		=> { type => SCALAR },
+		OperationType	=> { type => SCALAR },
+	});
+	
+	
+	my $xml = $self->_sign(Action  => 'ModifySnapshotAttribute', %args);
+	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
 =head2 monitor_instances(%params)
 
 Enables monitoring for a running instance. For more information, refer to the Amazon CloudWatch Developer Guide.
@@ -2469,6 +2644,51 @@ sub reset_image_attribute {
 	}
 }
 
+=head2 reset_snapshot_attribute(%params)
+
+This method resets an attribute for an snapshot to its default state.
+
+It takes the following parameters:
+
+=over
+
+=item SnapshotId (required)
+
+The snapshot id of the snapshot you wish to reset the attributes on.
+
+=item Attribute (required)
+
+The attribute you want to reset (currently "CreateVolumePermission" is the only
+valid attribute).
+
+=back
+
+Returns 1 if the attribute reset succeeds.
+
+=cut
+
+sub reset_snapshot_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		SnapshotId	=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'ResetSnapshotAttribute', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
 =head2 revoke_security_group_ingress(%params)
 
 This method revoke permissions to a security group.  It takes the following parameters:
@@ -2573,6 +2793,10 @@ The keypair name to associate this instance with.  If omitted, will use your def
 
 An scalar or array ref. Will associate this instance with the group names passed in.  If omitted, will be associated with the default security group.
 
+=item AdditionalInfo (optional)
+
+Specifies additional information to make available to the instance(s).
+
 =item UserData (optional)
 
 Optional data to pass into the instance being started.  Needs to be base64 encoded.
@@ -2602,6 +2826,14 @@ Specifies the type of instance to start.  The options are:
 =item c1.xlarge: High-CPU Extra Large Instance
 
 20 EC2 Compute Units (8 virtual cores with 2.5 EC2 Compute Units each). 64-bit, 7GB RAM, 1690GB disk
+
+=item m2.2xlarge
+
+13 EC2 Compute Units (4 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 34.2GB RAM, 850GB disk
+
+=item m2.4xlarge
+
+26 EC2 Compute Units (8 virtual cores with 3.25 EC2 Compute Units each). 64-bit, 68.4GB RAM, 1690GB disk
 
 =back 
 
@@ -2637,6 +2869,10 @@ The version.
 
 Enables monitoring for this instance.
 
+=item SubnetId (optional)
+
+Specifies the subnet ID within which to launch the instance(s) for Amazon Virtual Private Cloud.
+
 =back
 
 Returns a Net::Amazon::EC2::ReservationInfo object
@@ -2651,6 +2887,7 @@ sub run_instances {
 		MaxCount							=> { type => SCALAR },
 		KeyName								=> { type => SCALAR, optional => 1 },
 		SecurityGroup						=> { type => SCALAR | ARRAYREF, optional => 1 },
+		AdditionalInfo						=> { type => SCALAR, optional => 1 },
 		UserData							=> { type => SCALAR, optional => 1 },
 		InstanceType						=> { type => SCALAR, optional => 1 },
 		'Placement.AvailabilityZone'		=> { type => SCALAR, optional => 1 },
@@ -2661,6 +2898,7 @@ sub run_instances {
 		Encoding							=> { type => SCALAR, optional => 1 },
 		Version								=> { type => SCALAR, optional => 1 },
 		'Monitoring.Enabled'				=> { type => SCALAR, optional => 1 },
+		SubnetId							=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -2742,6 +2980,8 @@ sub run_instances {
 				ami_launch_index	=> $instance_elem->{amiLaunchIndex},
 				dns_name			=> $instance_elem->{dnsName},
 				image_id			=> $instance_elem->{imageId},
+				kernel_id			=> $instance_elem->{kernelId},
+				ramdisk_id			=> $instance_elem->{ramdiskId},
 				instance_id			=> $instance_elem->{instanceId},
 				instance_state		=> $instance_state_type,
 				instance_type		=> $instance_elem->{instanceType},
@@ -2752,6 +2992,10 @@ sub run_instances {
 				reason				=> $instance_elem->{reason},
 				platform			=> $instance_elem->{platform},
 				monitoring			=> $instance_elem->{monitoring}{state},
+				subnet_id			=> $instance_elem->{subnetId},
+				vpc_id				=> $instance_elem->{vpcId},
+				private_ip_address	=> $instance_elem->{privateIpAddress},
+				ip_address			=> $instance_elem->{ipAddress},
 			);
 
 			if ($product_codes) {
@@ -2889,7 +3133,7 @@ __END__
 
 Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  
 Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of 
-machine instance usage charges (since there are 2 instances started) which as of September 23rd, 2009 costs a total of $0.20 USD
+machine instance usage charges (since there are 2 instances started) which as of November 12th, 2009 costs a total of $0.17 USD
 
 Important note about the windows-only methods.  These have not been well tested as I do not run windows-based instances, so exercise
 caution in using these.
@@ -2897,6 +3141,10 @@ caution in using these.
 =head1 AUTHOR
 
 Jeff Kim <jkim@chosec.com>
+
+=head1 CONTRIBUTORS
+
+John McCullough
 
 =head1 COPYRIGHT
 
