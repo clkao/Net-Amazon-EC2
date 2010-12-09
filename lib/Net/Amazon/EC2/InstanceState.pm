@@ -27,6 +27,10 @@ An interger representing the instance state. Valid values are:
 
 =item * 48: terminated
 
+=item * 64: stopping
+
+=item * 80: stopped
+
 =back
 
 =item name (required)
@@ -43,6 +47,10 @@ The current named state of the instance. Valid values are:
 
 =item * terminated: the instance terminated 
 
+=item * stopping: the instance is in the process of stopping
+
+=item * stopped: the instance has been stopped
+
 =back
 
 =cut
@@ -54,11 +62,11 @@ __PACKAGE__->meta->make_immutable();
 
 =head1 AUTHOR
 
-Jeff Kim <jkim@chosec.com>
+Jeff Kim <cpan@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

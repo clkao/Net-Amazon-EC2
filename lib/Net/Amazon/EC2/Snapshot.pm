@@ -29,7 +29,7 @@ The ID of the volume the snapshot was taken from.
 
 The time the snapshot was started.
 
-=item progress (optional)
+=item progress (required)
 
 The current progress of the snapshop, in percent.
 
@@ -37,13 +37,17 @@ The current progress of the snapshop, in percent.
 
 AWS Access Key ID of the user who owns the snapshot.
 
-=item volume_size (optional)
+=item volume_size (required)
 
 The size of the volume, in GiB.
 
 =item description (optional)
 
 Description of the snapshot.
+
+=item owner_alias (optional)
+
+The AWS account alias (e.g., "amazon", "redhat", "self", etc.) or AWS account ID that owns the AMI.
 
 =back
 
@@ -55,18 +59,19 @@ has 'volume_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'start_time'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'progress'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'owner_id'		=> ( is => 'ro', isa => 'Str', required => 1 );
-has 'volume_size'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'volume_size'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'description'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'owner_alias'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
 =head1 AUTHOR
 
-Jeff Kim <jkim@chosec.com>
+Jeff Kim <cpan@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

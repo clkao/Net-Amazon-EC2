@@ -27,7 +27,6 @@ BEGIN {
 		Net::Amazon::EC2::ReservationInfo
 		Net::Amazon::EC2::RunningInstances
 		Net::Amazon::EC2::SecurityGroup
-		Net::Amazon::EC2::TerminateInstancesResponse
 		Net::Amazon::EC2::UserData
 		Net::Amazon::EC2::UserIdGroupPair		
 		Net::Amazon::EC2::Volume
@@ -42,6 +41,12 @@ BEGIN {
 		Net::Amazon::EC2::SnapshotAttribute
 		Net::Amazon::EC2::CreateVolumePermission
 		Net::Amazon::EC2::AvailabilityZoneMessage
+		Net::Amazon::EC2::StateReason
+		Net::Amazon::EC2::InstanceBlockDeviceMapping
+		Net::Amazon::EC2::InstanceStateChange
+		Net::Amazon::EC2::DescribeInstanceAttributeResponse
+		Net::Amazon::EC2::EbsInstanceBlockDeviceMapping
+		Net::Amazon::EC2::EbsBlockDevice
 	);
 
 	plan tests => scalar @modules;

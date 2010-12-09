@@ -1,13 +1,13 @@
-package Net::Amazon::EC2::Error;
+package Net::Amazon::EC2::StateReason;
 use Moose;
 
 =head1 NAME
 
-Net::Amazon::EC2::Error
+Net::Amazon::EC2::StateReason
 
 =head1 DESCRIPTION
 
-A class representing an EC2 API error.
+A class representing additional information on the reason for the current state of the instance.
 
 =head1 ATTRIBUTES
 
@@ -15,16 +15,20 @@ A class representing an EC2 API error.
 
 =item code (required)
 
-The error code returned from the API request.
+A code for the state change reason.
+
+=back
 
 =item message (required)
 
-The long form message about the error.
+A message providing additional information about the state.
+
+=back
 
 =cut
 
-has 'code'      => ( is => 'ro', isa => 'Str', required => 1 );
-has 'message'   => ( is => 'ro', isa => 'Str', required => 1 );
+has 'code'		=> ( is => 'ro', isa => 'Int|Str' );
+has 'message' 	=> ( is => 'ro', isa => 'Str' );
 
 __PACKAGE__->meta->make_immutable();
 

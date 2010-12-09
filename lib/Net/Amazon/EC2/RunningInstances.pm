@@ -100,6 +100,28 @@ Specifies the private IP address that is assigned to the instance (Amazon VPC).
 
 Specifies the IP address of the instance.
 
+=item state_reason (optional)
+
+The reason for the state change.
+
+A Net::Amazon::EC2::StateReason object.
+
+=item architecture (optional)
+
+The architecture of the image.
+
+=item root_device_name (optional)
+
+The root device name (e.g., /dev/sda1).
+
+=item root_device_type (optional)
+
+The root device type used by the AMI. The AMI can use an Amazon EBS or instance store root device.
+
+=item block_device_mapping (optional)
+
+An array ref of Net::Amazon::EC2::BlockDeviceMapping objects.
+
 =cut
 
 has 'ami_launch_index'  	=> ( is => 'ro', isa => 'Str', required => 0 );
@@ -131,17 +153,21 @@ has 'subnet_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'vpc_id'				=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'private_ip_address'	=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
 has 'ip_address'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
-
+has 'state_reason'			=> ( is => 'ro', isa => 'Maybe[Net::Amazon::EC2::StateReason]', required => 0 );
+has 'architecture'			=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'root_device_name'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'root_device_type'		=> ( is => 'ro', isa => 'Maybe[Str]', required => 0 );
+has 'block_device_mapping'	=> ( is => 'ro', isa => 'Maybe[ArrayRef[Net::Amazon::EC2::BlockDeviceMapping]]', required => 0 );
 
 __PACKAGE__->meta->make_immutable();
 
 =head1 AUTHOR
 
-Jeff Kim <jkim@chosec.com>
+Jeff Kim <cpan@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut

@@ -11,6 +11,7 @@ use URI;
 use MIME::Base64 qw(encode_base64 decode_base64);
 use HTTP::Date qw(time2isoz);
 use Params::Validate qw(validate SCALAR ARRAYREF);
+use Data::Dumper qw(Dumper);
 
 use Net::Amazon::EC2::DescribeImagesResponse;
 use Net::Amazon::EC2::DescribeKeyPairsResponse;
@@ -24,7 +25,6 @@ use Net::Amazon::EC2::ProductInstanceResponse;
 use Net::Amazon::EC2::ReservationInfo;
 use Net::Amazon::EC2::RunningInstances;
 use Net::Amazon::EC2::SecurityGroup;
-use Net::Amazon::EC2::TerminateInstancesResponse;
 use Net::Amazon::EC2::UserData;
 use Net::Amazon::EC2::UserIdGroupPair;
 use Net::Amazon::EC2::IpRange;
@@ -50,8 +50,14 @@ use Net::Amazon::EC2::InstancePassword;
 use Net::Amazon::EC2::SnapshotAttribute;
 use Net::Amazon::EC2::CreateVolumePermission;
 use Net::Amazon::EC2::AvailabilityZoneMessage;
+use Net::Amazon::EC2::StateReason;
+use Net::Amazon::EC2::InstanceBlockDeviceMapping;
+use Net::Amazon::EC2::InstanceStateChange;
+use Net::Amazon::EC2::DescribeInstanceAttributeResponse;
+use Net::Amazon::EC2::EbsInstanceBlockDeviceMapping;
+use Net::Amazon::EC2::EbsBlockDevice;
 
-$VERSION = '0.11';
+$VERSION = '0.14';
 
 =head1 NAME
 
@@ -60,10 +66,9 @@ environment.
 
 =head1 VERSION
 
-
-This document describes version 0.11 of Net::Amazon::EC2, released
-November 12th, 2009. This module is coded against the Query API version of the '2009-08-15' 
-version of the EC2 API last updated November 10th, 2009.
+This document describes version 0.14 of Net::Amazon::EC2, released
+February 1st, 2010. This module is coded against the Query API version of the '2009-11-30' 
+version of the EC2 API last updated December 8th, 2009.
 
 =head1 SYNOPSIS
 
@@ -115,6 +120,20 @@ Your AWS access key.
 
 Your secret key, WARNING! don't give this out or someone will be able to use your account and incur charges on your behalf.
 
+=item region (optional)
+
+The region to run the API requests through. The options are:
+
+=over
+
+=item * us-east-1 - Nothern Virginia
+
+=item * us-west-1 - Northern California
+
+=item * eu-west-1 - Ireland
+
+=back
+
 =item debug (optional)
 
 A flag to turn on debugging. It is turned off by default
@@ -127,9 +146,29 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-08-15' );
-has 'base_url'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'http://ec2.amazonaws.com' );
-has 'timestamp'			=> ( is => 'ro', isa => 'Str', required => 1, default => sub { my $ts = time2isoz(); chop($ts); $ts .= '.000Z'; $ts =~ s/\s+/T/g; return $ts; } );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-11-30' );
+has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
+has 'timestamp'			=> ( 
+	is			=> 'ro', 
+	isa			=> 'Str', 
+	required	=> 1, 
+	default		=> sub { 
+		my $ts = time2isoz(); 
+		chop($ts); 
+		$ts .= '.000Z'; 
+		$ts =~ s/\s+/T/g; 
+		return $ts; 
+	} 
+);
+has 'base_url'			=> ( 
+	is			=> 'ro', 
+	isa			=> 'Str', 
+	required	=> 1,
+	lazy		=> 1,
+	default		=> sub {
+		return 'http://' . $_[0]->region . '.ec2.amazonaws.com';
+	}
+);
 
 sub _sign {
 	my $self						= shift;
@@ -167,7 +206,7 @@ sub _sign {
 	my $ua	= LWP::UserAgent->new();
 	my $res	= $ua->post($ur, \%params);
 	# We should force <item> elements to be in an array
-	my $xs	= XML::Simple->new(ForceArray => qr/(?:item|Errors)/i);
+	my $xs	= XML::Simple->new(ForceArray => qr/(?:item|Errors)/i, KeyAttr => '');
 	my $xml;
 	
 	# Check the result for connectivity problems, if so throw an error
@@ -191,6 +230,7 @@ EOXML
 	}
 
 	my $ref = $xs->XMLin($xml);
+	warn Dumper($ref) . "\n\n" if $self->debug == 1;
 
 	return $ref;
 }
@@ -606,6 +646,63 @@ sub confirm_product_instance {
 		);
 		
 		return $confirm_response;
+	}
+}
+
+=head2 create_image(%params)
+
+Creates an AMI that uses an Amazon EBS root device from a "running" or "stopped" instance.
+
+AMIs that use an Amazon EBS root device boot faster than AMIs that use instance stores. 
+They can be up to 1 TiB in size, use storage that persists on instance failure, and can be stopped and started.
+
+=over
+
+=item InstanceId (required)
+
+The ID of the instance.
+
+=item Name (required)
+
+The name of the AMI that was provided during image creation.
+
+Note that the image name has the following constraints:
+
+3-128 alphanumeric characters, parenthesis, commas, slashes, dashes, or underscores.
+
+=item Description (optional)
+
+The description of the AMI that was provided during image creation.
+
+=item NoReboot (optional)
+
+By default this property is set to false, which means Amazon EC2 attempts to cleanly shut down the 
+instance before image creation and reboots the instance afterwards. When set to true, Amazon EC2 
+does not shut down the instance before creating the image. When this option is used, file system 
+integrity on the created image cannot be guaranteed. 
+
+=back
+
+Returns the ID of the AMI created.
+
+=cut
+
+sub create_image {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => SCALAR },
+		Name		=> { type => SCALAR },
+		Description	=> { type => SCALAR, optional => 1 },
+		NoReboot	=> { type => SCALAR, optional => 1 },
+	});
+		
+	my $xml = $self->_sign(Action  => 'CreateImage', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		return $xml->{imageId};
 	}
 }
 
@@ -1212,6 +1309,10 @@ Valid attributes are:
 
 Returns a Net::Amazon::EC2::DescribeImageAttribute object
 
+* NOTE: There is currently a bug in Amazon's SOAP and Query API
+for when you try and describe the attributes: kernel, ramdisk, blockDeviceMapping, or platform
+AWS returns an invalid response. No response yet from Amazon on an ETA for getting that bug fixed.
+
 =cut
 
 sub describe_image_attribute {
@@ -1349,17 +1450,59 @@ sub describe_images {
 		
 		foreach my $item (@{$xml->{imagesSet}{item}}) {
 			my $product_codes;
+			my $state_reason;
+			my $block_device_mappings;
+			
+			if ( grep { defined && length } $item->{stateReason} ) {
+				$state_reason = Net::Amazon::EC2::StateReason->new(
+					code	=> $item->{stateReason}{code},
+					message	=> $item->{stateReason}{message},
+				);
+			}
+
+			if ( grep { defined && length } $item->{blockDeviceMapping} ) {
+				foreach my $bdm ( @{$item->{blockDeviceMapping}{item}} ) {
+					my $virtual_name;
+					my $no_device;
+					my $ebs_block_device_mapping;
+					
+					if ( grep { defined && length } $bdm->{ebs} ) {
+						$ebs_block_device_mapping = Net::Amazon::EC2::EbsBlockDevice->new(
+							snapshot_id				=> $bdm->{ebs}{snapshotId},
+							volume_size				=> $bdm->{ebs}{volumeSize},
+							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+						);
+					}
+					
+					
+					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+						device_name		=> $bdm->{deviceName},
+						virtual_name	=> $virtual_name,
+						ebs				=> $ebs_block_device_mapping,
+						no_device		=> $no_device,
+					);
+					push @$block_device_mappings, $block_device_mapping;
+				}
+			}
+
 			my $image = Net::Amazon::EC2::DescribeImagesResponse->new(
-				image_id		=> $item->{imageId},
-				image_owner_id	=> $item->{imageOwnerId},
-				image_state		=> $item->{imageState},
-				is_public		=> $item->{isPublic},
-				image_location	=> $item->{imageLocation},
-				architecture	=> $item->{architecture},
-				image_type		=> $item->{imageType},
-				kernel_id		=> $item->{kernelId},
-				ramdisk_id		=> $item->{ramdiskId},
-				platform		=> $item->{platform},
+				image_id				=> $item->{imageId},
+				image_owner_id			=> $item->{imageOwnerId},
+				image_state				=> $item->{imageState},
+				is_public				=> $item->{isPublic},
+				image_location			=> $item->{imageLocation},
+				architecture			=> $item->{architecture},
+				image_type				=> $item->{imageType},
+				kernel_id				=> $item->{kernelId},
+				ramdisk_id				=> $item->{ramdiskId},
+				platform				=> $item->{platform},
+				state_reason			=> $state_reason,
+				image_owner_alias		=> $item->{imageOwnerAlias},
+				name					=> $item->{name},
+				description				=> $item->{description},
+				root_device_type		=> $item->{rootDeviceType},
+				root_device_name		=> $item->{rootDeviceName},
+				block_device_mapping	=> $block_device_mappings,
 			);
 			
 			if (grep { defined && length } $item->{productCodes} ) {
@@ -1370,6 +1513,7 @@ sub describe_images {
 				
 				$image->product_codes($product_codes);
 			}
+
 			
 			push @$images, $image;
 		}
@@ -1434,6 +1578,8 @@ sub describe_instances {
 				);
 				
 				my $product_codes;
+				my $block_device_mappings;
+				my $state_reason;
 				
 				if (grep { defined && length } $instance_elem->{productCodes} ) {
 					foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
@@ -1441,7 +1587,31 @@ sub describe_instances {
 						push @$product_codes, $product_code;
 					}
 				}
-	
+
+				if ( grep { defined && length } $instance_elem->{blockDeviceMapping} ) {
+					foreach my $bdm ( @{$instance_elem->{blockDeviceMapping}{item}} ) {
+						my $ebs_block_device_mapping = Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+							volume_id				=> $bdm->{ebs}{volumeId},
+							status					=> $bdm->{ebs}{status},
+							attach_time				=> $bdm->{ebs}{attachTime},
+							delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+						);
+						
+						my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+							ebs						=> $ebs_block_device_mapping,
+							device_name				=> $bdm->{deviceName},
+						);
+						push @$block_device_mappings, $block_device_mapping;
+					}
+				}
+
+				if ( grep { defined && length } $instance_elem->{stateReason} ) {
+					$state_reason = Net::Amazon::EC2::StateReason->new(
+						code	=> $instance_elem->{stateReason}{code},
+						message	=> $instance_elem->{stateReason}{message},
+					);
+				}
+				
 				unless ( grep { defined && length } $instance_elem->{reason} and ref $instance_elem->{reason} ne 'HASH' ) {
 					$instance_elem->{reason} = undef;
 				}
@@ -1461,25 +1631,30 @@ sub describe_instances {
 				my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
 				
 				my $running_instance = Net::Amazon::EC2::RunningInstances->new(
-					ami_launch_index	=> $instance_elem->{amiLaunchIndex},
-					dns_name			=> $instance_elem->{dnsName},
-					image_id			=> $instance_elem->{imageId},
-					kernel_id			=> $instance_elem->{kernelId},
-					ramdisk_id			=> $instance_elem->{ramdiskId},
-					instance_id			=> $instance_elem->{instanceId},
-					instance_state		=> $instance_state_type,
-					instance_type		=> $instance_elem->{instanceType},
-					key_name			=> $instance_elem->{keyName},
-					launch_time			=> $instance_elem->{launchTime},
-					placement			=> $placement_response,
-					private_dns_name	=> $instance_elem->{privateDnsName},
-					reason				=> $instance_elem->{reason},
-					platform			=> $instance_elem->{platform},
-					monitoring			=> $instance_elem->{monitoring}{state},
-					subnet_id			=> $instance_elem->{subnetId},
-					vpc_id				=> $instance_elem->{vpcId},
-					private_ip_address	=> $instance_elem->{privateIpAddress},
-					ip_address			=> $instance_elem->{ipAddress},
+					ami_launch_index		=> $instance_elem->{amiLaunchIndex},
+					dns_name				=> $instance_elem->{dnsName},
+					image_id				=> $instance_elem->{imageId},
+					kernel_id				=> $instance_elem->{kernelId},
+					ramdisk_id				=> $instance_elem->{ramdiskId},
+					instance_id				=> $instance_elem->{instanceId},
+					instance_state			=> $instance_state_type,
+					instance_type			=> $instance_elem->{instanceType},
+					key_name				=> $instance_elem->{keyName},
+					launch_time				=> $instance_elem->{launchTime},
+					placement				=> $placement_response,
+					private_dns_name		=> $instance_elem->{privateDnsName},
+					reason					=> $instance_elem->{reason},
+					platform				=> $instance_elem->{platform},
+					monitoring				=> $instance_elem->{monitoring}{state},
+					subnet_id				=> $instance_elem->{subnetId},
+					vpc_id					=> $instance_elem->{vpcId},
+					private_ip_address		=> $instance_elem->{privateIpAddress},
+					ip_address				=> $instance_elem->{ipAddress},
+					architecture			=> $instance_elem->{architecture},
+					root_device_name		=> $instance_elem->{rootDeviceName},
+					root_device_type		=> $instance_elem->{rootDeviceType},
+					block_device_mapping	=> $block_device_mappings,
+					state_reason			=> $state_reason,
 				);
 
 				if ($product_codes) {
@@ -1494,6 +1669,7 @@ sub describe_instances {
 				owner_id		=> $reservation_set->{ownerId},
 				group_set		=> $group_sets,
 				instances_set	=> $running_instances,
+				requester_id	=> $reservation_set->{requesterId},
 			);
 			
 			push @$reservations, $reservation;
@@ -1503,6 +1679,134 @@ sub describe_instances {
 
 	return $reservations;
 }
+
+=head2 describe_instance_attribute(%params)
+
+Returns information about an attribute of an instance. Only one attribute can be specified per call.
+
+=over
+
+=item InstanceId (required)
+
+The instance id we want to describe the attributes of.
+
+=item Attribute (required)
+
+The attribute we want to describe. Valid values are:
+
+=over
+
+=item * instanceType
+
+=item * kernel
+
+=item * ramdisk
+
+=item * userData
+
+=item * disableApiTermination
+
+=item * instanceInitiatedShutdownBehavior
+
+=item * rootDeviceName
+
+=item * blockDeviceMapping
+
+=back 
+
+=back
+
+Returns a Net::Amazon::EC2::DescribeInstanceAttributeResponse object
+
+=cut
+
+sub describe_instance_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'DescribeInstanceAttribute', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $attribute_response;
+		
+		# Test to see which type of attribute we are looking for, to dictacte 
+		# how to create the Net::Amazon::EC2::DescribeInstanceAttributeResponse object.
+		if ( $args{Attribute} eq 'instanceType' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id		=> $xml->{instanceId},
+				instance_type	=> $xml->{instanceType}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'kernel' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id	=> $xml->{instanceId},
+				kernel		=> $xml->{kernel}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'ramdisk' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id	=> $xml->{instanceId},
+				ramdisk		=> $xml->{ramdisk}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'userData' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id	=> $xml->{instanceId},
+				user_data	=> $xml->{userData}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'disableApiTermination' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id				=> $xml->{instanceId},
+				disable_api_termination	=> $xml->{disableApiTermination}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'instanceInitiatedShutdownBehavior' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id								=> $xml->{instanceId},
+				instance_initiated_shutdown_behavior	=> $xml->{instanceInitiatedShutdownBehavior}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'rootDeviceName' ) {
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id			=> $xml->{instanceId},
+				root_device_name	=> $xml->{rootDeviceName}{value},
+			);
+		}
+		elsif ( $args{Attribute} eq 'blockDeviceMapping' ) {
+			my $block_mappings;
+			foreach my $block_item (@{$xml->{blockDeviceMapping}{item}}) {
+				my $ebs_mapping				= Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+					attach_time				=> $block_item->{ebs}{attachTime},
+					delete_on_termination	=> $block_item->{ebs}{deleteOnTermination},
+					status					=> $block_item->{ebs}{status},
+					volume_id				=> $block_item->{ebs}{volumeId},
+				);
+				my $block_device_mapping	= Net::Amazon::EC2::BlockDeviceMapping->new(
+					device_name	=> $block_item->{deviceName},
+					ebs			=> $ebs_mapping,
+				);
+				
+				push @$block_mappings, $block_device_mapping;
+			}
+
+			warn Dumper($block_mappings);
+			$attribute_response = Net::Amazon::EC2::DescribeInstanceAttributeResponse->new(
+				instance_id				=> $xml->{instanceId},
+				block_device_mapping	=> $block_mappings,
+			);
+		}
+		
+		return $attribute_response;
+	}
+}
+
 
 =head2 describe_key_pairs(%params)
 
@@ -1973,6 +2277,10 @@ sub describe_snapshots {
 				$snap->{description} = undef;
 			}
 
+			unless ( grep { defined && length } $snap->{progress} and ref $snap->{progress} ne 'HASH') {
+				$snap->{progress} = undef;
+			}
+
  			my $snapshot = Net::Amazon::EC2::Snapshot->new(
  				snapshot_id		=> $snap->{snapshotId},
  				status			=> $snap->{status},
@@ -1982,6 +2290,7 @@ sub describe_snapshots {
  				owner_id		=> $snap->{ownerId},
  				volume_size		=> $snap->{volumeSize},
  				description		=> $snap->{description},
+ 				owner_alias		=> $snap->{ownerAlias},
  			);
  			
  			push @$snapshots, $snapshot;
@@ -2041,11 +2350,12 @@ sub describe_volumes {
 		
 			foreach my $attachment_set (@{$volume_set->{attachmentSet}{item}}) {
  				my $attachment = Net::Amazon::EC2::Attachment->new(
- 					volume_id	=> $attachment_set->{volumeId},
- 					status		=> $attachment_set->{status},
- 					instance_id	=> $attachment_set->{instanceId},
- 					attach_time	=> $attachment_set->{attachTime},
- 					device		=> $attachment_set->{device},
+ 					volume_id				=> $attachment_set->{volumeId},
+ 					status					=> $attachment_set->{status},
+ 					instance_id				=> $attachment_set->{instanceId},
+ 					attach_time				=> $attachment_set->{attachTime},
+ 					device					=> $attachment_set->{device},
+ 					delete_on_termination	=> $attachment_set->{deleteOnTermination},
  				);
  				
  				push @$attachments, $attachment;
@@ -2306,6 +2616,74 @@ sub modify_image_attribute {
 	}
 }
 
+=head2 modify_instance_attribute(%params)
+
+Modify an attribute of an instance. Only one attribute can be specified per call.
+
+=over
+
+=item InstanceId (required)
+
+The instance id we want to modify the attributes of.
+
+=item Attribute (required)
+
+The attribute we want to modify. Valid values are:
+
+=over
+
+=item * instanceType
+
+=item * kernel
+
+=item * ramdisk
+
+=item * userData
+
+=item * disableApiTermination
+
+=item * instanceInitiatedShutdownBehavior
+
+=item * rootDeviceName
+
+=item * blockDeviceMapping
+
+=back 
+
+=item Value (required)
+
+The value to set the attribute to.
+
+=back
+
+Returns 1 if the modification succeeds.
+
+=cut
+
+sub modify_instance_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => SCALAR },
+		Attribute	=> { type => SCALAR },
+		Value		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'ModifyInstanceAttribute', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+
 =head2 modify_snapshot_attribute(%params)
 
 This method modifies attributes of a snapshot.
@@ -2538,9 +2916,51 @@ This method registers an AMI on the EC2. It takes the following parameter:
 
 =over
 
-=item ImageLocation (required)
+=item imageLocation (optional)
 
 The location of the AMI manifest on S3
+
+=item name (required)
+
+The name of the AMI that was provided during image creation.
+
+=item description (optional)
+
+The description of the AMI.
+
+=item architecture (optional)
+
+The architecture of the image. Either i386 or x86_64
+
+=item kernelId (optional)
+
+The ID of the kernel to select. 
+
+=item ramdiskId (optional)
+
+The ID of the RAM disk to select. Some kernels require additional drivers at launch. 
+
+=item rootDeviceName (optional)
+
+The root device name (e.g., /dev/sda1).
+
+=item blockDeviceMapping (optional)
+
+This needs to be a data structure like this:
+
+[
+	{
+		deviceName	=> "/dev/sdh", (optional)
+		virtualName	=> "ephermel0", (optional)
+		noDevice	=> "/dev/sdl", (optional),
+		ebs			=> {
+			snapshotId			=> "snap-0000", (optional)
+			volumeSize			=> "20", (optional)
+			deleteOnTermination	=> "false", (optional)
+		},
+	},
+	...
+]	
 
 =back
 
@@ -2551,9 +2971,32 @@ Returns the image id of the new image on EC2.
 sub register_image {
 	my $self = shift;
 	my %args = validate( @_, {
-		ImageLocation => { type => SCALAR },
+		ImageLocation		=> { type => SCALAR, optional => 1 },
+		Name				=> { type => SCALAR },
+		Description			=> { type => SCALAR, optional => 1 },
+		Architecture		=> { type => SCALAR, optional => 1 },
+		KernelId			=> { type => SCALAR, optional => 1 },
+		RamdiskId			=> { type => SCALAR, optional => 1 },
+		RootDeviceName		=> { type => SCALAR, optional => 1 },
+		BlockDeviceMapping	=> { type => ARRAYREF, optional => 1 },
 	});
-		
+
+	
+	# If we have a array ref of block devices, we need to split them up
+	if (ref ($args{BlockDeviceMapping}) eq 'ARRAY') {
+		my $block_devices = delete $args{BlockDeviceMapping};
+		my $count = 1;
+		foreach my $block_device (@{$block_devices}) {
+			$args{"BlockDeviceMapping." . $count . ".DeviceName"}				= $block_device->{deviceName} if $block_device->{deviceName};
+			$args{"BlockDeviceMapping." . $count . ".VirtualName"}				= $block_device->{virtualName} if $block_device->{virtualName};
+			$args{"BlockDeviceMapping." . $count . ".NoDevice"}					= $block_device->{noDevice} if $block_device->{noDevice};
+			$args{"BlockDeviceMapping." . $count . ".Ebs.SnapshotId"}			= $block_device->{ebs}{snapshotId} if $block_device->{ebs}{snapshotId};
+			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeSize"}			= $block_device->{ebs}{volumeSize} if $block_device->{ebs}{volumeSize};
+			$args{"BlockDeviceMapping." . $count . ".Ebs.DeleteOnTermination"}	= $block_device->{ebs}{deleteOnTermination} if $block_device->{ebs}{deleteOnTermination};
+			$count++;
+		}
+	}
+
 	my $xml	= $self->_sign(Action  => 'RegisterImage', %args);
 
 	if ( grep { defined && length } $xml->{Errors} ) {
@@ -2630,6 +3073,56 @@ sub reset_image_attribute {
 	});
 	
 	my $xml = $self->_sign(Action  => 'ResetImageAttribute', %args);
+
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		if ($xml->{return} eq 'true') {
+			return 1;
+		}
+		else {
+			return undef;
+		}
+	}
+}
+
+=head2 reset_instance_attribute(%params)
+
+Reset an attribute of an instance. Only one attribute can be specified per call.
+
+=over
+
+=item InstanceId (required)
+
+The instance id we want to reset the attributes of.
+
+=item Attribute (required)
+
+The attribute we want to reset. Valid values are:
+
+=over
+
+=item * kernel
+
+=item * ramdisk
+
+=back 
+
+=back
+
+Returns 1 if the reset succeeds.
+
+=cut
+
+sub reset_instance_attribute {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId		=> { type => SCALAR },
+		Attribute 		=> { type => SCALAR },
+	});
+	
+	my $xml = $self->_sign(Action  => 'ResetInstanceAttribute', %args);
 
 	if ( grep { defined && length } $xml->{Errors} ) {
 		return $self->_parse_errors($xml);
@@ -2882,23 +3375,28 @@ Returns a Net::Amazon::EC2::ReservationInfo object
 sub run_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		ImageId								=> { type => SCALAR },
-		MinCount							=> { type => SCALAR },
-		MaxCount							=> { type => SCALAR },
-		KeyName								=> { type => SCALAR, optional => 1 },
-		SecurityGroup						=> { type => SCALAR | ARRAYREF, optional => 1 },
-		AdditionalInfo						=> { type => SCALAR, optional => 1 },
-		UserData							=> { type => SCALAR, optional => 1 },
-		InstanceType						=> { type => SCALAR, optional => 1 },
-		'Placement.AvailabilityZone'		=> { type => SCALAR, optional => 1 },
-		KernelId							=> { type => SCALAR, optional => 1 },
-		RamdiskId							=> { type => SCALAR, optional => 1 },
-		'BlockDeviceMapping.VirtualName'	=> { type => SCALAR | ARRAYREF, optional => 1 },
-		'BlockDeviceMapping.DeviceName'		=> { type => SCALAR | ARRAYREF, optional => 1 },
-		Encoding							=> { type => SCALAR, optional => 1 },
-		Version								=> { type => SCALAR, optional => 1 },
-		'Monitoring.Enabled'				=> { type => SCALAR, optional => 1 },
-		SubnetId							=> { type => SCALAR, optional => 1 },
+		ImageId											=> { type => SCALAR },
+		MinCount										=> { type => SCALAR },
+		MaxCount										=> { type => SCALAR },
+		KeyName											=> { type => SCALAR, optional => 1 },
+		SecurityGroup									=> { type => SCALAR | ARRAYREF, optional => 1 },
+		AdditionalInfo									=> { type => SCALAR, optional => 1 },
+		UserData										=> { type => SCALAR, optional => 1 },
+		InstanceType									=> { type => SCALAR, optional => 1 },
+		'Placement.AvailabilityZone'					=> { type => SCALAR, optional => 1 },
+		KernelId										=> { type => SCALAR, optional => 1 },
+		RamdiskId										=> { type => SCALAR, optional => 1 },
+		'BlockDeviceMapping.VirtualName'				=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.DeviceName'					=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.Ebs.SnapshotId'				=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.Ebs.VolumeSize'				=> { type => SCALAR | ARRAYREF, optional => 1 },
+		'BlockDeviceMapping.Ebs.DeleteOnTermination'	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		Encoding										=> { type => SCALAR, optional => 1 },
+		Version											=> { type => SCALAR, optional => 1 },
+		'Monitoring.Enabled'							=> { type => SCALAR, optional => 1 },
+		SubnetId										=> { type => SCALAR, optional => 1 },
+		DisableApiTermination							=> { type => SCALAR, optional => 1 },
+		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
@@ -2911,7 +3409,7 @@ sub run_instances {
 		}
 	}
 
-	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.VirtualName.n format
+	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.VirtualName format
 	if (ref ($args{'BlockDeviceMapping.VirtualName'}) eq 'ARRAY') {
 		my $virtual_names	= delete $args{'BlockDeviceMapping.VirtualName'};
 		my $count			= 1;
@@ -2921,12 +3419,42 @@ sub run_instances {
 		}
 	}
 
-	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.DeviceName.n format
+	# If we have a array ref of block device virtual names lets split them out into their BlockDeviceMapping.n.DeviceName format
 	if (ref ($args{'BlockDeviceMapping.DeviceName'}) eq 'ARRAY') {
 		my $device_names	= delete $args{'BlockDeviceMapping.DeviceName'};
 		my $count			= 1;
 		foreach my $device_name (@{$device_names}) {
 			$args{"BlockDeviceMapping." . $count . ".DeviceName"} = $device_name;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of block device EBS Snapshots lets split them out into their BlockDeviceMapping.n.Ebs.SnapshotId format
+	if (ref ($args{'BlockDeviceMapping.Ebs.SnapshotId'}) eq 'ARRAY') {
+		my $snapshot_ids	= delete $args{'BlockDeviceMapping.Ebs.SnapshotId'};
+		my $count			= 1;
+		foreach my $snapshot_id (@{$snapshot_ids}) {
+			$args{"BlockDeviceMapping." . $count . ".Ebs.SnapshotId"} = $snapshot_id;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of block device EBS VolumeSizes lets split them out into their BlockDeviceMapping.n.Ebs.VolumeSize format
+	if (ref ($args{'BlockDeviceMapping.Ebs.VolumeSize'}) eq 'ARRAY') {
+		my $volume_sizes	= delete $args{'BlockDeviceMapping.Ebs.VolumeSize'};
+		my $count			= 1;
+		foreach my $volume_size (@{$volume_sizes}) {
+			$args{"BlockDeviceMapping." . $count . ".Ebs.VolumeSize"} = $volume_size;
+			$count++;
+		}
+	}
+
+	# If we have a array ref of block device EBS DeleteOnTerminations lets split them out into their BlockDeviceMapping.n.Ebs.DeleteOnTermination format
+	if (ref ($args{'BlockDeviceMapping.Ebs.DeleteOnTermination'}) eq 'ARRAY') {
+		my $terminations	= delete $args{'BlockDeviceMapping.Ebs.DeleteOnTermination'};
+		my $count			= 1;
+		foreach my $termination (@{$terminations}) {
+			$args{"BlockDeviceMapping." . $count . ".Ebs.DeleteOnTermination"} = $termination;
 			$count++;
 		}
 	}
@@ -2953,6 +3481,8 @@ sub run_instances {
 			);
 			
 			my $product_codes;
+			my $state_reason;
+			my $block_device_mappings;
 			
 			if (grep { defined && length } $instance_elem->{productCodes} ) {
 				foreach my $pc (@{$instance_elem->{productCodes}{item}}) {
@@ -2973,29 +3503,57 @@ sub run_instances {
 				$instance_elem->{dnsName} = undef;
 			}
 
+			if ( grep { defined && length } $instance_elem->{stateReason} ) {
+				$state_reason = Net::Amazon::EC2::StateReason->new(
+					code	=> $instance_elem->{stateReason}{code},
+					message	=> $instance_elem->{stateReason}{message},
+				);
+			}
+
+			if ( grep { defined && length } $instance_elem->{blockDeviceMapping} ) {
+				foreach my $bdm ( @{$instance_elem->{blockDeviceMapping}{item}} ) {
+					my $ebs_block_device_mapping = Net::Amazon::EC2::EbsInstanceBlockDeviceMapping->new(
+						volume_id				=> $bdm->{ebs}{volumeId},
+						status					=> $bdm->{ebs}{status},
+						attach_time				=> $bdm->{ebs}{attachTime},
+						delete_on_termination	=> $bdm->{ebs}{deleteOnTermination},							
+					);
+					
+					my $block_device_mapping = Net::Amazon::EC2::BlockDeviceMapping->new(
+						ebs						=> $ebs_block_device_mapping,
+						device_name				=> $bdm->{deviceName},
+					);
+					push @$block_device_mappings, $block_device_mapping;
+				}
+			}
 
 			my $placement_response = Net::Amazon::EC2::PlacementResponse->new( availability_zone => $instance_elem->{placement}{availabilityZone} );
 			
 			my $running_instance = Net::Amazon::EC2::RunningInstances->new(
-				ami_launch_index	=> $instance_elem->{amiLaunchIndex},
-				dns_name			=> $instance_elem->{dnsName},
-				image_id			=> $instance_elem->{imageId},
-				kernel_id			=> $instance_elem->{kernelId},
-				ramdisk_id			=> $instance_elem->{ramdiskId},
-				instance_id			=> $instance_elem->{instanceId},
-				instance_state		=> $instance_state_type,
-				instance_type		=> $instance_elem->{instanceType},
-				key_name			=> $instance_elem->{keyName},
-				launch_time			=> $instance_elem->{launchTime},
-				placement			=> $placement_response,
-				private_dns_name	=> $instance_elem->{privateDnsName},
-				reason				=> $instance_elem->{reason},
-				platform			=> $instance_elem->{platform},
-				monitoring			=> $instance_elem->{monitoring}{state},
-				subnet_id			=> $instance_elem->{subnetId},
-				vpc_id				=> $instance_elem->{vpcId},
-				private_ip_address	=> $instance_elem->{privateIpAddress},
-				ip_address			=> $instance_elem->{ipAddress},
+				ami_launch_index		=> $instance_elem->{amiLaunchIndex},
+				dns_name				=> $instance_elem->{dnsName},
+				image_id				=> $instance_elem->{imageId},
+				kernel_id				=> $instance_elem->{kernelId},
+				ramdisk_id				=> $instance_elem->{ramdiskId},
+				instance_id				=> $instance_elem->{instanceId},
+				instance_state			=> $instance_state_type,
+				instance_type			=> $instance_elem->{instanceType},
+				key_name				=> $instance_elem->{keyName},
+				launch_time				=> $instance_elem->{launchTime},
+				placement				=> $placement_response,
+				private_dns_name		=> $instance_elem->{privateDnsName},
+				reason					=> $instance_elem->{reason},
+				platform				=> $instance_elem->{platform},
+				monitoring				=> $instance_elem->{monitoring}{state},
+				subnet_id				=> $instance_elem->{subnetId},
+				vpc_id					=> $instance_elem->{vpcId},
+				private_ip_address		=> $instance_elem->{privateIpAddress},
+				ip_address				=> $instance_elem->{ipAddress},
+				architecture			=> $instance_elem->{architecture},
+				root_device_name		=> $instance_elem->{rootDeviceName},
+				root_device_type		=> $instance_elem->{rootDeviceType},
+				block_device_mapping	=> $block_device_mappings,
+				state_reason			=> $state_reason,
 			);
 
 			if ($product_codes) {
@@ -3016,6 +3574,141 @@ sub run_instances {
 	}
 }
 
+=head2 start_instances(%params)
+
+Starts an instance that uses an Amazon EBS volume as its root device.
+
+=over
+
+=item InstanceId (required)
+
+Either a scalar or an array ref can be passed in (containing instance ids to be started).
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
+
+=cut
+
+sub start_instances {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => SCALAR | ARRAYREF },
+	});
+	
+	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	if (ref ($args{InstanceId}) eq 'ARRAY') {
+		my $instance_ids	= delete $args{InstanceId};
+		my $count			= 1;
+		foreach my $instance_id (@{$instance_ids}) {
+			$args{"InstanceId." . $count} = $instance_id;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'StartInstances', %args);	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $started_instances;
+		
+		foreach my $inst (@{$xml->{instancesSet}{item}}) {
+			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{previousState}{code},
+				name	=> $inst->{previousState}{name},
+			);
+			
+			my $current_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{currentState}{code},
+				name	=> $inst->{currentState}{name},
+			);
+
+			my $started_instance = Net::Amazon::EC2::InstanceStateChange->new(
+				instance_id		=> $inst->{instanceId},
+				previous_state	=> $previous_state,
+				current_state	=> $current_state,
+			);
+			
+			push @$started_instances, $started_instance;
+		}
+		
+		return $started_instances;
+	}
+}
+
+=head2 stop_instances(%params)
+
+Stops an instance that uses an Amazon EBS volume as its root device.
+
+=over
+
+=item InstanceId (required)
+
+Either a scalar or an array ref can be passed in (containing instance ids to be stopped).
+
+=item Force (optional)
+
+If set to true, forces the instance to stop. The instance will not have an opportunity to 
+flush file system caches nor file system meta data. If you use this option, you must perform file 
+system check and repair procedures. This option is not recommended for Windows instances.
+
+The default is false.
+
+=back
+
+Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
+
+=cut
+
+sub stop_instances {
+	my $self = shift;
+	my %args = validate( @_, {
+		InstanceId	=> { type => SCALAR | ARRAYREF },
+		Force		=> { type => SCALAR, optional => 1 },
+	});
+	
+	# If we have a array ref of instances lets split them out into their InstanceId.n format
+	if (ref ($args{InstanceId}) eq 'ARRAY') {
+		my $instance_ids	= delete $args{InstanceId};
+		my $count			= 1;
+		foreach my $instance_id (@{$instance_ids}) {
+			$args{"InstanceId." . $count} = $instance_id;
+			$count++;
+		}
+	}
+	
+	my $xml = $self->_sign(Action  => 'StopInstances', %args);	
+	if ( grep { defined && length } $xml->{Errors} ) {
+		return $self->_parse_errors($xml);
+	}
+	else {
+		my $stopped_instances;
+		
+		foreach my $inst (@{$xml->{instancesSet}{item}}) {
+			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{previousState}{code},
+				name	=> $inst->{previousState}{name},
+			);
+			
+			my $current_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{currentState}{code},
+				name	=> $inst->{currentState}{name},
+			);
+
+			my $stopped_instance = Net::Amazon::EC2::InstanceStateChange->new(
+				instance_id		=> $inst->{instanceId},
+				previous_state	=> $previous_state,
+				current_state	=> $current_state,
+			);
+			
+			push @$stopped_instances, $stopped_instance;
+		}
+		
+		return $stopped_instances;
+	}
+}
+
 =head2 terminate_instances(%params)
 
 This method shuts down instance(s) passed into it. It takes the following parameter:
@@ -3028,14 +3721,14 @@ Either a scalar or an array ref can be passed in (containing instance ids)
 
 =back
 
-Returns an array ref of Net::Amazon::EC2::TerminateInstancesResponse objects.
+Returns an array ref of Net::Amazon::EC2::InstanceStateChange objects.
 
 =cut
 
 sub terminate_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
+		InstanceId => { type => SCALAR | ARRAYREF },
 	});
 	
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -3056,12 +3749,24 @@ sub terminate_instances {
 		my $terminated_instances;
 		
 		foreach my $inst (@{$xml->{instancesSet}{item}}) {
-			my $terminated_instance = Net::Amazon::EC2::TerminateInstancesResponse->new(
+			my $previous_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{previousState}{code},
+				name	=> $inst->{previousState}{name},
+			);
+			
+			my $current_state = Net::Amazon::EC2::InstanceState->new(
+				code	=> $inst->{currentState}{code},
+				name	=> $inst->{currentState}{name},
+			);
+
+			# Note, this is a bit of a backwards incompatible change in so much as I am changing
+			# return class for this.  I hate to do it but I need to be consistent with this
+			# now being a instance stage change object.  This used to be a 
+			# Net::Amazon::EC2::TerminateInstancesResponse object.
+			my $terminated_instance = Net::Amazon::EC2::InstanceStateChange->new(
 				instance_id		=> $inst->{instanceId},
-				shutdown_code	=> $inst->{shutdownState}{code},
-				shutdown_name	=> $inst->{shutdownState}{name},
-				previous_code	=> $inst->{previousState}{code},
-				previous_name	=> $inst->{previousState}{name},
+				previous_state	=> $previous_state,
+				current_state	=> $current_state,
 			);
 			
 			push @$terminated_instances, $terminated_instance;
@@ -3133,14 +3838,18 @@ __END__
 
 Set AWS_ACCESS_KEY_ID and SECRET_ACCESS_KEY environment variables to run the live tests.  
 Note: because the live tests start an instance (and kill it) in both the tests and backwards compat tests there will be 2 hours of 
-machine instance usage charges (since there are 2 instances started) which as of November 12th, 2009 costs a total of $0.17 USD
+machine instance usage charges (since there are 2 instances started) which as of February 1st, 2010 costs a total of $0.17 USD
 
 Important note about the windows-only methods.  These have not been well tested as I do not run windows-based instances, so exercise
 caution in using these.
 
+=head1 TODO
+
+Need to add in support for Spot Instances.
+
 =head1 AUTHOR
 
-Jeff Kim <jkim@chosec.com>
+Jeff Kim <cpan@chosec.com>
 
 =head1 CONTRIBUTORS
 
@@ -3148,7 +3857,7 @@ John McCullough
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =head1 SEE ALSO

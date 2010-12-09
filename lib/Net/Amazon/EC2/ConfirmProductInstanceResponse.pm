@@ -35,11 +35,11 @@ __PACKAGE__->meta->make_immutable();
 
 =head1 AUTHOR
 
-Jeff Kim <jkim@chosec.com>
+Jeff Kim <cpan@chosec.com>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006-2009 Jeff Kim. This program is free software; you can redistribute it and/or modify it
+Copyright (c) 2006-2010 Jeff Kim. This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
 
 =cut
