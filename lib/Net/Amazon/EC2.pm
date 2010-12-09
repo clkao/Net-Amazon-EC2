@@ -1,5 +1,5 @@
 package Net::Amazon::EC2;
-use Moose;
+use Any::Moose;
 
 use strict;
 use vars qw($VERSION);
@@ -3829,7 +3829,7 @@ sub unmonitor_instances {
 	}
 }
 
-no Moose;
+no Any::Moose;
 1;
 
 __END__
