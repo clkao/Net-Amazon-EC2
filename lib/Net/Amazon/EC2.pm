@@ -284,6 +284,22 @@ sub _hashit {
 	return $encoded;
 }
 
+sub _build_filters {
+	my ($self, $args) = @_;
+	my $filters	= delete $args->{Filter};
+
+	return unless $filters && ref($filters) eq 'ARRAY';
+
+	$filters	= [ $filters ] unless ref($filters->[0]) eq 'ARRAY';
+	my $count	= 1;
+	foreach my $filter (@{$filters}) {
+		my ($name, @args) = @$filter;
+		$args->{"Filter." . $count.".Name"} = $name;
+		$args->{"Filter." . $count.".Value.".$_} = $args[$_-1] for 1..scalar @args;
+		$count++;
+	}
+}
+
 =head1 OBJECT METHODS
 
 =head2 allocate_address()
@@ -1541,7 +1557,8 @@ Returns an array ref of Net::Amazon::EC2::ReservationInfo objects
 sub describe_instances {
 	my $self = shift;
 	my %args = validate( @_, {
-		InstanceId => { type => SCALAR | ARRAYREF, optional => 1 },
+		InstanceId	=> { type => SCALAR | ARRAYREF, optional => 1 },
+		Filter		=> { type => ARRAYREF, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their InstanceId.n format
@@ -1553,7 +1570,8 @@ sub describe_instances {
 			$count++;
 		}
 	}
-	
+
+	$self->_build_filters(\%args);
 	my $xml = $self->_sign(Action  => 'DescribeInstances', %args);
 	my $reservations;
 	
