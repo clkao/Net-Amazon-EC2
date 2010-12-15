@@ -146,7 +146,7 @@ has 'AWSAccessKeyId'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'SecretAccessKey'	=> ( is => 'ro', isa => 'Str', required => 1 );
 has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
-has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2009-11-30' );
+has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2010-08-31' );
 has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
 has 'timestamp'			=> ( 
 	is			=> 'ro', 
@@ -3397,6 +3397,7 @@ sub run_instances {
 		SubnetId										=> { type => SCALAR, optional => 1 },
 		DisableApiTermination							=> { type => SCALAR, optional => 1 },
 		InstanceInitiatedShutdownBehavior				=> { type => SCALAR, optional => 1 },
+		ClientToken										=> { type => SCALAR, optional => 1 },
 	});
 	
 	# If we have a array ref of instances lets split them out into their SecurityGroup.n format
