@@ -148,18 +148,6 @@ has 'debug'				=> ( is => 'ro', isa => 'Str', required => 0, default => 0 );
 has 'signature_version'	=> ( is => 'ro', isa => 'Int', required => 1, default => 1 );
 has 'version'			=> ( is => 'ro', isa => 'Str', required => 1, default => '2010-08-31' );
 has 'region'			=> ( is => 'ro', isa => 'Str', required => 1, default => 'us-east-1' );
-has 'timestamp'			=> ( 
-	is			=> 'ro', 
-	isa			=> 'Str', 
-	required	=> 1, 
-	default		=> sub { 
-		my $ts = time2isoz(); 
-		chop($ts); 
-		$ts .= '.000Z'; 
-		$ts =~ s/\s+/T/g; 
-		return $ts; 
-	} 
-);
 has 'base_url'			=> ( 
 	is			=> 'ro', 
 	isa			=> 'Str', 
@@ -169,6 +157,14 @@ has 'base_url'			=> (
 		return 'http://' . $_[0]->region . '.ec2.amazonaws.com';
 	}
 );
+
+sub timestamp {
+	my $ts = time2isoz();
+	chop($ts);
+	$ts .= '.000Z';
+	$ts =~ s/\s+/T/g;
+	return $ts;
+};
 
 sub _sign {
 	my $self						= shift;
